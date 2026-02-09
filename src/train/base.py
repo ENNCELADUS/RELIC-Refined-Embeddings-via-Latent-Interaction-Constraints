@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 import torch
-import torch.nn.functional as functional
 from torch import nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, OneCycleLR
 from torch.utils.data import DataLoader
 
+from src.utils.losses import LossConfig, binary_classification_loss
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 
 
@@ -71,6 +71,7 @@ class Trainer:
         device: torch.device,
         optimizer_config: OptimizerConfig,
         scheduler_config: SchedulerConfig,
+        loss_config: LossConfig,
         use_amp: bool,
         total_epochs: int,
         steps_per_epoch: int,
@@ -80,11 +81,15 @@ class Trainer:
         self.device = device
         self.optimizer_config = optimizer_config
         self.scheduler_config = scheduler_config
+        self.loss_config = loss_config
         self.use_amp = use_amp and device.type == "cuda"
         self.total_epochs = total_epochs
         self.steps_per_epoch = max(1, steps_per_epoch)
         self.ohem_strategy = ohem_strategy
-        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)  # type: ignore[attr-defined]
+        self.scaler = torch.amp.GradScaler(  # type: ignore[attr-defined]
+            "cuda",
+            enabled=self.use_amp,
+        )
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
 
@@ -149,25 +154,24 @@ class Trainer:
         output: dict[str, torch.Tensor],
         batch: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        if "loss" in output:
-            loss = output["loss"]
-        else:
-            logits = output["logits"].squeeze(-1)
-            labels = batch["label"].float()
-            loss = functional.binary_cross_entropy_with_logits(logits, labels)
+        logits = output["logits"]
+        labels = batch["label"].float()
+        loss = binary_classification_loss(
+            logits=logits,
+            labels=labels,
+            loss_config=self.loss_config,
+            reduction="mean",
+        )
 
         if self.ohem_strategy is None:
             return loss
 
-        per_sample = output.get("per_sample_loss")
-        if per_sample is None:
-            logits = output["logits"].squeeze(-1)
-            labels = batch["label"].float()
-            per_sample = functional.binary_cross_entropy_with_logits(
-                logits,
-                labels,
-                reduction="none",
-            )
+        per_sample = binary_classification_loss(
+            logits=logits,
+            labels=labels,
+            loss_config=self.loss_config,
+            reduction="none",
+        )
         selected_indices = self.ohem_strategy.select(per_sample)
         return per_sample[selected_indices].mean()
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 import torch
-import torch.nn.functional as functional
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -18,6 +17,8 @@ from sklearn.metrics import (
 )
 from torch import nn
 from torch.utils.data import DataLoader
+
+from src.utils.losses import LossConfig, binary_classification_loss
 
 
 def _safe_float(value: float) -> float:
@@ -39,10 +40,12 @@ class Evaluator:
 
     Args:
         metrics: Metric names to compute.
+        loss_config: Loss hyperparameters for consistent loss reporting.
     """
 
-    def __init__(self, metrics: list[str]) -> None:
+    def __init__(self, metrics: list[str], loss_config: LossConfig) -> None:
         self.metrics = [metric.lower() for metric in metrics]
+        self.loss_config = loss_config
 
     @staticmethod
     def _forward_model(model: nn.Module, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -146,7 +149,7 @@ class Evaluator:
         model: nn.Module,
         data_loader: DataLoader[dict[str, torch.Tensor]],
         device: torch.device,
-        prefix: str = "val",
+        prefix: str | None = "val",
     ) -> dict[str, float]:
         """Evaluate metrics on a loader.
 
@@ -156,7 +159,7 @@ class Evaluator:
             model: Model to evaluate.
             data_loader: Data loader for the split.
             device: Device where evaluation runs.
-            prefix: Metric name prefix for output keys.
+            prefix: Optional metric name prefix for output keys.
 
         Returns:
             Metric dictionary with prefixed names.
@@ -170,17 +173,25 @@ class Evaluator:
             batch_count += 1
             prepared_batch = {key: value.to(device) for key, value in batch.items()}
             output = self._forward_model(model=model, batch=prepared_batch)
-            logits = output["logits"].squeeze(-1)
+            logits = output["logits"]
             labels = prepared_batch["label"].float()
-            loss = output.get("loss")
-            if loss is None:
-                loss = functional.binary_cross_entropy_with_logits(logits, labels)
+            loss = binary_classification_loss(
+                logits=logits,
+                labels=labels,
+                loss_config=self.loss_config,
+                reduction="mean",
+            )
             total_loss += float(loss.detach().item())
-            all_probs.append(torch.sigmoid(logits).detach().cpu())
+            reduced_logits = (
+                logits.squeeze(-1) if logits.dim() > 1 and logits.size(-1) == 1 else logits
+            )
+            all_probs.append(torch.sigmoid(reduced_logits).detach().cpu())
             all_labels.append(labels.detach().cpu())
 
         probs_tensor = torch.cat(all_probs, dim=0)
         labels_tensor = torch.cat(all_labels, dim=0).long()
         metric_values = self._compute_metrics(labels=labels_tensor, probabilities=probs_tensor)
         metric_values["loss"] = total_loss / max(1, batch_count)
+        if prefix is None:
+            return metric_values
         return {f"{prefix}_{key}": value for key, value in metric_values.items()}

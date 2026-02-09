@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as functional
 from src.evaluate import Evaluator
 from src.train.base import OptimizerConfig, SchedulerConfig, Trainer
+from src.utils.losses import LossConfig
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
@@ -74,6 +75,7 @@ def test_trainer_runs_single_epoch() -> None:
         device=torch.device("cpu"),
         optimizer_config=OptimizerConfig(optimizer_type="adamw", lr=1e-2),
         scheduler_config=SchedulerConfig(scheduler_type="none"),
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
         use_amp=False,
         total_epochs=1,
         steps_per_epoch=len(loader),
@@ -88,7 +90,10 @@ def test_trainer_runs_single_epoch() -> None:
 def test_evaluator_returns_metric_dictionary() -> None:
     model = TinyModel()
     loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)
-    evaluator = Evaluator(metrics=["accuracy", "f1", "auroc"])
+    evaluator = Evaluator(
+        metrics=["accuracy", "f1", "auroc"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+    )
     model.eval()
     with torch.no_grad():
         metrics = evaluator.evaluate(
@@ -101,3 +106,24 @@ def test_evaluator_returns_metric_dictionary() -> None:
     assert "val_accuracy" in metrics
     assert "val_f1" in metrics
     assert "val_auroc" in metrics
+
+
+def test_evaluator_without_prefix_returns_raw_metric_names() -> None:
+    model = TinyModel()
+    loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)
+    evaluator = Evaluator(
+        metrics=["accuracy", "f1", "auroc"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+    )
+    model.eval()
+    with torch.no_grad():
+        metrics = evaluator.evaluate(
+            model=model,
+            data_loader=loader,
+            device=torch.device("cpu"),
+            prefix=None,
+        )
+    assert "accuracy" in metrics
+    assert "f1" in metrics
+    assert "auroc" in metrics
+    assert "loss" in metrics

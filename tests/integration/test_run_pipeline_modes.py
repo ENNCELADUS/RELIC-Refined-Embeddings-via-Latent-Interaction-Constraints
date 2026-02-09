@@ -9,6 +9,7 @@ import pytest
 import src.run as run_module
 import torch
 from src.utils.config import ConfigDict
+from src.utils.distributed import DistributedContext
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -74,8 +75,11 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
 
     def fake_build_dataloaders(
         config: ConfigDict,
+        distributed: bool = False,
+        rank: int = 0,
+        world_size: int = 1,
     ) -> dict[str, DataLoader[dict[str, torch.Tensor]]]:
-        del config
+        del config, distributed, rank, world_size
         loader = DataLoader(_EmptyDataset(), batch_size=1)
         return {"train": loader, "valid": loader, "test": loader}
 
@@ -90,9 +94,10 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
         device: torch.device,
         dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
         run_id: str,
+        distributed_context: DistributedContext,
         checkpoint_to_load: Path | None = None,
     ) -> Path:
-        del config, model, device, dataloaders
+        del config, model, device, dataloaders, distributed_context
         calls.training.append((stage, checkpoint_to_load, run_id))
         return Path(f"artifacts/{stage}_best_model.pth")
 
@@ -103,13 +108,18 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
         dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
         run_id: str,
         checkpoint_path: Path,
+        distributed_context: DistributedContext,
     ) -> dict[str, float]:
-        del config, model, device, dataloaders
+        del config, model, device, dataloaders, distributed_context
         calls.evaluation.append((checkpoint_path, run_id))
-        return {"test_accuracy": 1.0}
+        return {"accuracy": 1.0}
 
-    def fake_initialize_distributed(ddp_enabled: bool) -> None:
+    def fake_initialize_distributed(ddp_enabled: bool) -> DistributedContext:
         del ddp_enabled
+        return DistributedContext(ddp_enabled=False, is_distributed=False)
+
+    def fake_cleanup_distributed(context: DistributedContext) -> None:
+        del context
 
     def fake_resolve_device(device_name: str) -> torch.device:
         del device_name
@@ -120,6 +130,7 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
     monkeypatch.setattr(run_module, "run_training_stage", fake_run_training_stage)
     monkeypatch.setattr(run_module, "run_evaluation_stage", fake_run_evaluation_stage)
     monkeypatch.setattr(run_module, "initialize_distributed", fake_initialize_distributed)
+    monkeypatch.setattr(run_module, "cleanup_distributed", fake_cleanup_distributed)
     monkeypatch.setattr(run_module, "resolve_device", fake_resolve_device)
     return calls
 
@@ -166,3 +177,16 @@ def test_execute_pipeline_eval_only(
 
     assert patched_pipeline.training == []
     assert patched_pipeline.evaluation == [(Path("artifacts/eval_input_model.pth"), "eval_run")]
+
+
+@pytest.mark.parametrize("deprecated_mode", ["pretrain_only", "finetune_from_pretrain"])
+def test_execute_pipeline_removed_modes_raise(
+    base_config: ConfigDict,
+    patched_pipeline: PipelineCalls,
+    deprecated_mode: str,
+) -> None:
+    run_cfg = base_config["run_config"]
+    assert isinstance(run_cfg, dict)
+    run_cfg["mode"] = deprecated_mode
+    with pytest.raises(ValueError, match="Unsupported run mode"):
+        run_module.execute_pipeline(base_config)

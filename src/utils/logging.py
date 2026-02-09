@@ -68,15 +68,20 @@ def prepare_stage_directories(model_name: str, stage: str, run_id: str) -> tuple
     return log_dir, model_dir
 
 
-def append_csv_row(csv_path: Path, row: dict[str, float | int]) -> None:
+def append_csv_row(
+    csv_path: Path,
+    row: dict[str, float | int | str],
+    fieldnames: list[str] | None = None,
+) -> None:
     """Append a row to a CSV file, creating headers when needed.
 
     Args:
         csv_path: CSV file path.
         row: Row payload keyed by column names.
+        fieldnames: Optional explicit column order.
     """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    row_keys = list(row.keys())
+    row_keys = fieldnames if fieldnames is not None else list(row.keys())
     write_header = not csv_path.exists()
     with csv_path.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=row_keys)

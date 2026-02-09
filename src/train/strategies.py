@@ -50,8 +50,15 @@ def _set_trainable_by_prefix(
         model: Target model.
         trainable_prefixes: Name prefixes that should remain trainable.
     """
+
+    def _matches(name: str) -> bool:
+        return any(
+            name.startswith(prefix) or name.startswith(f"module.{prefix}")
+            for prefix in trainable_prefixes
+        )
+
     for name, parameter in model.named_parameters():
-        parameter.requires_grad = any(name.startswith(prefix) for prefix in trainable_prefixes)
+        parameter.requires_grad = _matches(name)
 
 
 @dataclass

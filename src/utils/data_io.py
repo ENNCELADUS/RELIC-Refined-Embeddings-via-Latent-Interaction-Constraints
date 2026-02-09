@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 from src.utils.config import ConfigDict, as_bool, as_int, get_section
 
@@ -162,6 +163,9 @@ def _build_split_loader(
     max_sequence_length: int,
     seed: int,
     shuffle: bool,
+    distributed: bool,
+    rank: int,
+    world_size: int,
 ) -> DataLoader[dict[str, torch.Tensor]]:
     """Build a split-specific data loader.
 
@@ -172,6 +176,9 @@ def _build_split_loader(
         max_sequence_length: Sequence length used for synthetic tensors.
         seed: Dataset seed.
         shuffle: Whether to shuffle samples.
+        distributed: Whether DDP sampling is enabled.
+        rank: Global rank for distributed sampler.
+        world_size: World size for distributed sampler.
 
     Returns:
         Configured dataloader for the requested split.
@@ -198,18 +205,37 @@ def _build_split_loader(
         seed=seed,
         max_samples=max_samples,
     )
+    sampler: DistributedSampler[dict[str, torch.Tensor]] | None = None
+    should_shuffle = shuffle
+    if distributed:
+        sampler = DistributedSampler(
+            dataset=dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=shuffle,
+            seed=seed,
+            drop_last=drop_last,
+        )
+        should_shuffle = False
+
     return DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=should_shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=drop_last,
+        sampler=sampler,
         collate_fn=_collate_batch,
     )
 
 
-def build_dataloaders(config: ConfigDict) -> dict[str, DataLoader[dict[str, torch.Tensor]]]:
+def build_dataloaders(
+    config: ConfigDict,
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+) -> dict[str, DataLoader[dict[str, torch.Tensor]]]:
     """Build train/valid/test loaders from the global config.
 
     Args:
@@ -251,6 +277,9 @@ def build_dataloaders(config: ConfigDict) -> dict[str, DataLoader[dict[str, torc
             max_sequence_length=max_sequence_length,
             seed=seed,
             shuffle=True,
+            distributed=distributed,
+            rank=rank,
+            world_size=world_size,
         ),
         "valid": _build_split_loader(
             split_path=valid_path,
@@ -259,6 +288,9 @@ def build_dataloaders(config: ConfigDict) -> dict[str, DataLoader[dict[str, torc
             max_sequence_length=max_sequence_length,
             seed=seed + 1,
             shuffle=False,
+            distributed=False,
+            rank=rank,
+            world_size=world_size,
         ),
         "test": _build_split_loader(
             split_path=test_path,
@@ -267,5 +299,8 @@ def build_dataloaders(config: ConfigDict) -> dict[str, DataLoader[dict[str, torc
             max_sequence_length=max_sequence_length,
             seed=seed + 2,
             shuffle=False,
+            distributed=False,
+            rank=rank,
+            world_size=world_size,
         ),
     }
