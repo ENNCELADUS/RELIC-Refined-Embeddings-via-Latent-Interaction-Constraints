@@ -38,7 +38,7 @@ Checkpoint scaffold and code-style unification changes so the next iteration can
 - Should synthetic embedding generation in `src/utils/data_io.py` be replaced with ESM embedding loading in the next commit?
 
 ## Next Steps (actionable, ordered)
-1. Install `mypy` in the `esm` environment and run strict type checks on `src` and `tests`.
+1. Install `mypy` in the `relic` environment and run strict type checks on `src` and `tests`.
 2. Add model registry/factory wiring for future models beyond `v3` without expanding if/elif chains.
 3. Replace synthetic PRING embeddings with deterministic loading from cached ESM embeddings.
 4. Add integration tests for `pretrain_only`, `finetune_from_pretrain`, and `eval_only` run modes.

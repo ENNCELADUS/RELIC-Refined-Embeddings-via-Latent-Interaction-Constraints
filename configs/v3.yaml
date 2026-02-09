@@ -1,5 +1,5 @@
 run_config:
-  mode: "full_pipeline"  # pretrain_only | finetune_from_pretrain | full_pipeline | eval_only
+  mode: "full_pipeline"  # full_pipeline | train_only | eval_only
   seed: 47
   pretrain_run_id: null
   finetune_run_id: null
