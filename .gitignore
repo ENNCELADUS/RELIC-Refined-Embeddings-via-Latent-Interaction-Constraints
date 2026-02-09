@@ -1,3 +1,48 @@
+# Data Files
+models/
+cache/
+
+# Binary & Large File Formats
+*.pkl
+*.pt
+*.pth
+*.h5
+*.npy
+*.npz
+*.safetensors
+*.bin
+*.onnx
+*.joblib
+*.jsonl
+*.txt
+*.fasta
+*.csv
+
+# Archives
+archives/
+legacy/
+*.zip
+*.tar
+*.gz
+
+# External Codebases
+PRING/
+
+# Research & Report Files
+docs/research/
+docs/report/
+.reports/
+
+# LaTeX Cache & Auxiliary Files
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -157,48 +202,3 @@ __marimo__/
 # OS Generated
 .DS_Store
 Thumbs.db
-
-# Data Files
-models/
-cache/
-
-# Binary & Large File Formats
-*.pkl
-*.pt
-*.pth
-*.h5
-*.npy
-*.npz
-*.safetensors
-*.bin
-*.onnx
-*.joblib
-*.jsonl
-*.txt
-*.fasta
-*.csv
-
-# Archives
-archives/
-legacy/
-*.zip
-*.tar
-*.gz
-
-# External Codebases
-external/
-
-# Research & Report Files
-docs/research/
-docs/report/
-.reports/
-
-# LaTeX Cache & Auxiliary Files
-*.aux
-*.out
-*.toc
-*.fls
-*.fdb_latexmk
-*.synctex.gz
-*.bbl
-*.blg
