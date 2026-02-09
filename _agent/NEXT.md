@@ -13,7 +13,6 @@
 1. Execute `scripts/v3.sh` on target HPC allocation and capture distributed runtime/artifact behavior.
 2. Add/adjust tests for exact train/eval CSV header order and required columns.
 3. Update `docs/design_patterns/pipeline.md`, `docs/design_patterns/evaluator.md`, and `docs/design_patterns/logging_overview.md` to match runtime behavior.
-4. Decide and finalize legacy script cleanup (`scripts/run_pipeline.sh` replacement note or restore).
 5. Re-run `python -m pytest` and HPC smoke gate (`RELIC_RUN_HPC_E2E=1`) where hardware is available.
 
 ## Guardrails
