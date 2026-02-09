@@ -16,11 +16,12 @@ git clone https://github.com/ENNCELADUS/RELIC-Refined-Embeddings-via-Latent-Inte
 cd relic
 
 # 2. Create environment
-conda create -n relic python=3.10
+conda create -n relic python=3.11
 conda activate relic
+pip install uv
 
 # 3. Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ## Quick Usage
