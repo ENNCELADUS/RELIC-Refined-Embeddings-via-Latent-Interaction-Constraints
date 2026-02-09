@@ -1,41 +1,41 @@
-# V3 Config
-
 run_config:
-  mode: "full_pipeline"  # full_pipeline | finetune_from_pretrain | eval_only
+  mode: "full_pipeline"  # pretrain_only | finetune_from_pretrain | full_pipeline | eval_only
   seed: 47
-  pretrain_run_id: null   # Auto-timestamp if null
-  finetune_run_id: null   # Auto-timestamp if null
-  eval_run_id: null       # Auto-timestamp if null
-  load_checkpoint_path: null             # If mode = full_pipeline, then NULL checkpoint.
-                                        # If mode = finetune_from_pretrain, then the checkpoint of the pretrain run.
-                                        # If mode = eval_only, then the checkpoint of the finetune run.
-  save_best_only: true     # If true, only save the best checkpoint. If not, save checkpoint at every epoch end, while also keeps a best model checkpoint.
+  pretrain_run_id: null
+  finetune_run_id: null
+  eval_run_id: null
+  load_checkpoint_path: null
+  save_best_only: true
 
 device_config:
-  device: "cuda"
-  ddp_enabled: true         # Enable DistributedDataParallel by default
-  use_mixed_precision: true # Enable mixed precision training
+  device: "cpu"
+  ddp_enabled: false
+  use_mixed_precision: false
 
 data_config:
-  embeddings_path: ""
-  max_sequence_length: 1024
+  benchmark:
+    name: "PRING"
+    root_dir: "data/PRING"
+    species: "human"
+    split_strategy: "BFS"  # BFS | DFS | RANDOM_WALK
+    processed_dir: "data/PRING/species_processed_data/human/BFS"
+  embeddings:
+    source: "esm3"
+    cache_dir: "data/embeddings/esm3"
+  max_sequence_length: 32
   dataloader:
+    train_dataset: "data/PRING/species_processed_data/human/BFS/human_train_ppi.txt"
+    valid_dataset: "data/PRING/species_processed_data/human/BFS/human_val_ppi.txt"
+    test_dataset: "data/PRING/species_processed_data/human/BFS/human_test_ppi.txt"
+    max_samples_per_split: 128
     num_workers: 0
-    prefetch_factor: null
-    persistent_workers: false
     pin_memory: false
     drop_last: false
-
-    train_dataset: "data/TMP/processed/finetune_train.csv"
-    valid_dataset: "data/TMP/processed/finetune_val.csv"
-    test_dataset: "data/TMP/processed/test.csv"
-
     sampling:
-      strategy: "staged_hard"
-      warmup_pos_neg_ratio: 7.0
-      warmup_epochs: 2
-      pool_multiplier: 16
-      cap_protein: 2
+      strategy: "ohem"  # none | ohem
+      warmup_epochs: 1
+      keep_ratio: 0.5
+      min_keep: 8
 
 model_config:
   model: "v3"
@@ -44,44 +44,22 @@ model_config:
   encoder_layers: 2
   cross_attn_layers: 2
   n_heads: 12
-
-  # MLP head configuration
   mlp_head:
     hidden_dims: [256, 128, 64]
     dropout: 0.20
     activation: "gelu"
     norm: "layernorm"
-
-  # Architecture related regularization
   regularization:
-    dropout: 0.15                   # Required: transformer block dropout
-    token_dropout: 0.10             # Optional: dropout on embeddings before encoder (0.0 = disabled)
-    cross_attention_dropout: 0.15   # Optional: dropout for cross-attention
-    stochastic_depth: 0.10          # Max drop-path rate across encoder depth (linear schedule)
+    dropout: 0.15
+    token_dropout: 0.10
+    cross_attention_dropout: 0.15
+    stochastic_depth: 0.10
 
 training_config:
-  epochs: 40
-  batch_size: 32
-
-  # Logging configuration
-  logging_metrics:               # Two metrics to log to the training_step.csv file
-    primary: auprc
-    secondary: auroc
-  
-  # Early stopping
-  early_stopping_patience: 5
-  monitor_metric: "auprc"     # Which metric to use for early stopping
-  
-  # Scheduler settings.
-  scheduler:
-    type: "onecycle"
-    max_lr: 0.00005
-    pct_start: 0.20
-    div_factor: 25
-    final_div_factor: 10000
-    anneal_strategy: "cos"
-  
-  # Optimizer
+  epochs: 3
+  batch_size: 16
+  early_stopping_patience: 2
+  monitor_metric: "auprc"
   optimizer:
     type: "adamw"
     lr: 0.00005
@@ -89,23 +67,26 @@ training_config:
     beta2: 0.999
     eps: 1.0e-8
     weight_decay: 0.015
-  # Loss
-  loss:
-    type: "bce_with_logits"
-    pos_weight: 1.0
-    label_smoothing: 0.02
-    use_class_weights: true
-    l1_lambda: 0.0
+  scheduler:
+    type: "onecycle"
+    max_lr: 0.00005
+    pct_start: 0.20
+    div_factor: 25
+    final_div_factor: 10000
+    anneal_strategy: "cos"
+  strategy:
+    type: "staged_unfreeze"
+    unfreeze_epoch: 1
+    initial_trainable_prefixes: ["output_head"]
 
 evaluate:
-  metrics: [
-    "auroc",
-    "auprc",
-    "accuracy",
-    "sensitivity",
-    "specificity",
-    "precision",
-    "recall",
-    "f1",
-    "mcc",
-  ]
+  metrics:
+    - "auroc"
+    - "auprc"
+    - "accuracy"
+    - "sensitivity"
+    - "specificity"
+    - "precision"
+    - "recall"
+    - "f1"
+    - "mcc"

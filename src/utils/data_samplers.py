@@ -1,5 +1,4 @@
-"""
-Custom samplers used throughout data loading.
+"""Custom samplers used throughout data loading.
 
 Provides batch samplers used for class-imbalanced training, including
 staged OHEM sampling.
@@ -9,12 +8,11 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Iterator, List, Optional, Sequence, Tuple
+from collections.abc import Iterator, Sequence
 
 
 class ImbalancedBatchSampler:
-    """
-    Batch sampler that maintains a target positive-to-negative ratio.
+    """Batch sampler that maintains a target positive-to-negative ratio.
 
     Each epoch iterates through all positive indices once (without replacement)
     and samples negatives once per epoch (with replacement) to match the
@@ -28,9 +26,10 @@ class ImbalancedBatchSampler:
         pos_neg_ratio: float = 3.0,
         shuffle: bool = True,
         drop_last: bool = False,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ) -> None:
-        """
+        """Initialize the sampler.
+
         Args:
             labels: Binary labels (0 for negative, 1 for positive) for the dataset.
             batch_size: Desired batch size used to derive per-class counts.
@@ -55,18 +54,12 @@ class ImbalancedBatchSampler:
             raise ValueError("labels must be binary (0 or 1)")
 
         self.pos_indices = [idx for idx, label in enumerate(processed_labels) if label]
-        self.neg_indices = [
-            idx for idx, label in enumerate(processed_labels) if not label
-        ]
+        self.neg_indices = [idx for idx, label in enumerate(processed_labels) if not label]
 
         if not self.pos_indices:
-            raise ValueError(
-                "ImbalancedBatchSampler requires at least one positive sample"
-            )
+            raise ValueError("ImbalancedBatchSampler requires at least one positive sample")
         if not self.neg_indices:
-            raise ValueError(
-                "ImbalancedBatchSampler requires at least one negative sample"
-            )
+            raise ValueError("ImbalancedBatchSampler requires at least one negative sample")
 
         self.batch_size = batch_size
         self.pos_neg_ratio = float(pos_neg_ratio)
@@ -78,7 +71,7 @@ class ImbalancedBatchSampler:
         self.pos_per_batch = self._compute_pos_per_batch()
         self.neg_per_batch = self._compute_neg_per_batch(self.pos_per_batch)
 
-    def __iter__(self) -> Iterator[List[int]]:
+    def __iter__(self) -> Iterator[list[int]]:
         """Yield batches of indices with the configured ratio."""
         pos_indices = list(self.pos_indices)
         if self.shuffle:
@@ -104,7 +97,7 @@ class ImbalancedBatchSampler:
         )
 
         neg_offset = 0
-        for pos_batch, neg_count in zip(batches, neg_requirements):
+        for pos_batch, neg_count in zip(batches, neg_requirements, strict=False):
             neg_batch = neg_pool[neg_offset : neg_offset + neg_count]
             neg_offset += neg_count
 
@@ -142,8 +135,7 @@ class ImbalancedBatchSampler:
 
 
 class StagedOHEMBatchSampler:
-    """
-    Batch sampler with staged warmup + online hard example mining (OHEM).
+    """Batch sampler with staged warmup + online hard example mining (OHEM).
 
     Warmup (epoch < warmup_epochs):
       - Sample positives without replacement.
@@ -165,7 +157,7 @@ class StagedOHEMBatchSampler:
         cap_protein: int = 2,
         shuffle: bool = True,
         drop_last: bool = False,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
@@ -190,18 +182,12 @@ class StagedOHEMBatchSampler:
 
         self.labels = processed_labels
         self.pos_indices = [idx for idx, label in enumerate(processed_labels) if label]
-        self.neg_indices = [
-            idx for idx, label in enumerate(processed_labels) if not label
-        ]
+        self.neg_indices = [idx for idx, label in enumerate(processed_labels) if not label]
 
         if not self.pos_indices:
-            raise ValueError(
-                "StagedOHEMBatchSampler requires at least one positive sample"
-            )
+            raise ValueError("StagedOHEMBatchSampler requires at least one positive sample")
         if not self.neg_indices:
-            raise ValueError(
-                "StagedOHEMBatchSampler requires at least one negative sample"
-            )
+            raise ValueError("StagedOHEMBatchSampler requires at least one negative sample")
 
         self.batch_size = int(batch_size)
         self.warmup_pos_neg_ratio = float(warmup_pos_neg_ratio)
@@ -226,7 +212,8 @@ class StagedOHEMBatchSampler:
         if self.seed is not None:
             self._rng = random.Random(self.seed + epoch)
 
-    def __iter__(self) -> Iterator[List[int] | List[Tuple[int, str, int, int]]]:
+    def __iter__(self) -> Iterator[list[int] | list[tuple[int, str, int, int]]]:
+        """Yield either warmup batches or mining candidate pools."""
         if self._epoch < self.warmup_epochs:
             yield from self._iter_warmup()
         else:
@@ -234,11 +221,12 @@ class StagedOHEMBatchSampler:
         self._epoch += 1
 
     def __len__(self) -> int:
+        """Return current epoch batch count based on the active stage."""
         if self._epoch < self.warmup_epochs:
             return self._warmup_length()
         return self._mining_length()
 
-    def _iter_warmup(self) -> Iterator[List[int]]:
+    def _iter_warmup(self) -> Iterator[list[int]]:
         pos_indices = list(self.pos_indices)
         neg_indices = list(self.neg_indices)
         if self.shuffle:
@@ -262,7 +250,7 @@ class StagedOHEMBatchSampler:
             self._rng.shuffle(batch)
             yield batch
 
-    def _iter_mining(self) -> Iterator[List[Tuple[int, str, int, int]]]:
+    def _iter_mining(self) -> Iterator[list[tuple[int, str, int, int]]]:
         pos_indices = list(self.pos_indices)
         neg_indices = list(self.neg_indices)
         if self.shuffle:
@@ -277,23 +265,17 @@ class StagedOHEMBatchSampler:
 
         for _ in range(num_pools):
             pos_batch = (
-                pos_indices[pos_offset : pos_offset + pos_in_pool]
-                if pos_in_pool > 0
-                else []
+                pos_indices[pos_offset : pos_offset + pos_in_pool] if pos_in_pool > 0 else []
             )
             neg_batch = (
-                neg_indices[neg_offset : neg_offset + neg_in_pool]
-                if neg_in_pool > 0
-                else []
+                neg_indices[neg_offset : neg_offset + neg_in_pool] if neg_in_pool > 0 else []
             )
             pos_offset += pos_in_pool
             neg_offset += neg_in_pool
 
             pool = pos_batch + neg_batch
             self._rng.shuffle(pool)
-            yield [
-                (idx, "ohem_pool", self.batch_size, self.cap_protein) for idx in pool
-            ]
+            yield [(idx, "ohem_pool", self.batch_size, self.cap_protein) for idx in pool]
 
     def _compute_pos_per_batch(self) -> int:
         denom = 1.0 + self.warmup_pos_neg_ratio
@@ -337,12 +319,8 @@ class StagedOHEMBatchSampler:
 
     def _mining_length(self) -> int:
         pos_in_pool, neg_in_pool = self._pool_class_counts()
-        pos_limit = (
-            math.inf if pos_in_pool == 0 else len(self.pos_indices) // pos_in_pool
-        )
-        neg_limit = (
-            math.inf if neg_in_pool == 0 else len(self.neg_indices) // neg_in_pool
-        )
+        pos_limit = math.inf if pos_in_pool == 0 else len(self.pos_indices) // pos_in_pool
+        neg_limit = math.inf if neg_in_pool == 0 else len(self.neg_indices) // neg_in_pool
         if pos_limit is math.inf and neg_limit is math.inf:
             return 0
         return int(min(pos_limit, neg_limit))

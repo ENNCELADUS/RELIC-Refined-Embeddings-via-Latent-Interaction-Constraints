@@ -1,0 +1,85 @@
+"""Logging and artifact helper utilities."""
+
+from __future__ import annotations
+
+import csv
+import logging
+from datetime import datetime
+from pathlib import Path
+
+
+def generate_run_id(existing_value: object | None) -> str:
+    """Return explicit run ID or generate a timestamp-based one.
+
+    Args:
+        existing_value: Optional configured run ID.
+
+    Returns:
+        Existing non-empty ID or generated timestamp ID.
+    """
+    if isinstance(existing_value, str) and existing_value.strip():
+        return existing_value.strip()
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def setup_stage_logger(name: str, log_file: Path) -> logging.Logger:
+    """Build a stage-specific logger with console and file handlers.
+
+    Args:
+        name: Logger name.
+        log_file: Stage log file path.
+
+    Returns:
+        Configured logger instance.
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    if logger.handlers:
+        return logger
+    formatter = logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(name)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+
+def prepare_stage_directories(model_name: str, stage: str, run_id: str) -> tuple[Path, Path]:
+    """Create and return log/model directories for a stage.
+
+    Args:
+        model_name: Model name (e.g. ``v3``).
+        stage: Stage name (pretrain/finetune/evaluate).
+        run_id: Unique stage run ID.
+
+    Returns:
+        Tuple of ``(log_dir, model_dir)``.
+    """
+    log_dir = Path("logs") / model_name / stage / run_id
+    model_dir = Path("models") / model_name / stage / run_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir, model_dir
+
+
+def append_csv_row(csv_path: Path, row: dict[str, float | int]) -> None:
+    """Append a row to a CSV file, creating headers when needed.
+
+    Args:
+        csv_path: CSV file path.
+        row: Row payload keyed by column names.
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    row_keys = list(row.keys())
+    write_header = not csv_path.exists()
+    with csv_path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=row_keys)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)

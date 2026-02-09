@@ -31,7 +31,7 @@ Standard Deep Learning project layout:
 - `tests/`: Project tests (Unit, Integration, E2E).
 
 ## Build, Test, and Development Commands
-- **Environment**: `conda activate esm`
+- **Environment**: `conda activate relic`
 - **Linting**: `ruff check --fix .` (Fixes lint errors)
 - **Formatting**: `ruff format .` (Formats code)
 - **Testing**: `python -m pytest` (Runs all tests)
