@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from src.utils.config import ConfigDict, get_section
+from src.utils.config import ConfigDict, as_bool, as_int, get_section
 
 
 @dataclass(frozen=True)
@@ -179,12 +179,18 @@ def _build_split_loader(
     training_cfg = get_section(config, "training_config")
     data_cfg = get_section(config, "data_config")
     dataloader_cfg = get_section(data_cfg, "dataloader")
-    batch_size = int(training_cfg.get("batch_size", 8))
-    num_workers = int(dataloader_cfg.get("num_workers", 0))
-    pin_memory = bool(dataloader_cfg.get("pin_memory", False))
-    drop_last = bool(dataloader_cfg.get("drop_last", False))
+    batch_size = as_int(training_cfg.get("batch_size", 8), "training_config.batch_size")
+    num_workers = as_int(dataloader_cfg.get("num_workers", 0), "data_config.dataloader.num_workers")
+    pin_memory = as_bool(
+        dataloader_cfg.get("pin_memory", False), "data_config.dataloader.pin_memory"
+    )
+    drop_last = as_bool(dataloader_cfg.get("drop_last", False), "data_config.dataloader.drop_last")
     max_samples_value = dataloader_cfg.get("max_samples_per_split")
-    max_samples = int(max_samples_value) if max_samples_value is not None else None
+    max_samples = (
+        as_int(max_samples_value, "data_config.dataloader.max_samples_per_split")
+        if max_samples_value is not None
+        else None
+    )
     dataset = PRINGPairDataset(
         file_path=split_path,
         input_dim=input_dim,
@@ -224,9 +230,11 @@ def build_dataloaders(config: ConfigDict) -> dict[str, DataLoader[dict[str, torc
     if not benchmark_root.exists():
         raise FileNotFoundError(f"Benchmark root does not exist: {benchmark_root}")
 
-    input_dim = int(model_cfg.get("input_dim", 0))
-    max_sequence_length = int(data_cfg.get("max_sequence_length", 64))
-    seed = int(run_cfg.get("seed", 0))
+    input_dim = as_int(model_cfg.get("input_dim", 0), "model_config.input_dim")
+    max_sequence_length = as_int(
+        data_cfg.get("max_sequence_length", 64), "data_config.max_sequence_length"
+    )
+    seed = as_int(run_cfg.get("seed", 0), "run_config.seed")
 
     train_path = Path(str(dataloader_cfg.get("train_dataset", "")))
     valid_path = Path(str(dataloader_cfg.get("valid_dataset", "")))

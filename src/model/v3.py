@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
+
 import torch
 import torch.nn as nn
 
@@ -47,6 +50,37 @@ def _build_padding_mask(lengths: torch.Tensor | None, max_len: int) -> torch.Ten
     return torch.arange(max_len, device=lengths.device).expand(
         lengths.size(0), max_len
     ) >= lengths.unsqueeze(1)
+
+
+def _to_int(value: object, field_name: str) -> int:
+    """Convert config value to integer."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        try:
+            return int(value)
+        except ValueError as error:
+            raise ValueError(f"{field_name} must be int-compatible") from error
+    raise ValueError(f"{field_name} must be int-compatible")
+
+
+def _to_float(value: object, field_name: str) -> float:
+    """Convert config value to float."""
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float, str)):
+        try:
+            return float(value)
+        except ValueError as error:
+            raise ValueError(f"{field_name} must be float-compatible") from error
+    raise ValueError(f"{field_name} must be float-compatible")
+
+
+def _to_mapping(value: object, field_name: str) -> Mapping[str, object]:
+    """Validate config value as key-value mapping."""
+    if isinstance(value, Mapping):
+        return value
+    raise ValueError(f"{field_name} must be a mapping")
 
 
 class SiameseEncoder(nn.Module):
@@ -109,7 +143,7 @@ class SiameseEncoder(nn.Module):
             delta = y - residual_in
             delta = self.drop_paths[idx](delta)  # Identity in eval or when rate==0
             projected = residual_in + delta
-        return self.output_norm(projected)
+        return cast(torch.Tensor, self.output_norm(projected))
 
 
 class CrossAttentionLayer(nn.Module):
@@ -161,11 +195,11 @@ class CrossAttentionLayer(nn.Module):
         """Apply attention sub-layer with residual connection."""
         query_norm = self.norm_attn(query)
         attn_out, _ = self.attn(query_norm, key_value, key_value, key_padding_mask=key_padding_mask)
-        return query + self.drop_attn(attn_out)
+        return query + cast(torch.Tensor, self.drop_attn(attn_out))
 
     def _ffn(self, x: torch.Tensor) -> torch.Tensor:
         """Apply feed-forward sub-layer with residual connection."""
-        return x + self.drop_ffn(self.ffn(self.norm_ffn(x)))
+        return x + cast(torch.Tensor, self.drop_ffn(self.ffn(self.norm_ffn(x))))
 
     def forward(
         self,
@@ -324,7 +358,7 @@ class MLPHead(nn.Module):
         Returns:
             Output logit tensor.
         """
-        return self.layers(x)
+        return cast(torch.Tensor, self.layers(x))
 
 
 class V3(nn.Module):
@@ -345,34 +379,48 @@ class V3(nn.Module):
         if missing:
             raise ValueError(f"Missing required model configuration fields: {missing}")
 
-        self.input_dim: int = int(model_config["input_dim"])
-        self.d_model: int = int(model_config["d_model"])
-        self.encoder_layers: int = int(model_config["encoder_layers"])
-        self.cross_attn_layers: int = int(model_config["cross_attn_layers"])
-        self.n_heads: int = int(model_config["n_heads"])
+        self.input_dim = _to_int(model_config["input_dim"], "model_config.input_dim")
+        self.d_model = _to_int(model_config["d_model"], "model_config.d_model")
+        self.encoder_layers = _to_int(model_config["encoder_layers"], "model_config.encoder_layers")
+        self.cross_attn_layers = _to_int(
+            model_config["cross_attn_layers"],
+            "model_config.cross_attn_layers",
+        )
+        self.n_heads = _to_int(model_config["n_heads"], "model_config.n_heads")
 
         mlp_cfg_raw = model_config.get("mlp_head")
         if not isinstance(mlp_cfg_raw, dict) or not mlp_cfg_raw:
             raise ValueError("mlp_head configuration is required for V3")
-        if "hidden_dims" not in mlp_cfg_raw or "dropout" not in mlp_cfg_raw:
+        mlp_cfg = _to_mapping(mlp_cfg_raw, "model_config.mlp_head")
+        if "hidden_dims" not in mlp_cfg or "dropout" not in mlp_cfg:
             raise ValueError("mlp_head.hidden_dims and mlp_head.dropout must be provided")
-        hidden_dims_raw = mlp_cfg_raw["hidden_dims"]
+        hidden_dims_raw = mlp_cfg["hidden_dims"]
         if not isinstance(hidden_dims_raw, list) or not hidden_dims_raw:
             raise ValueError("mlp_head.hidden_dims must be a non-empty list")
-        self.mlp_hidden_dims = [int(value) for value in hidden_dims_raw]
-        self.mlp_dropout = float(mlp_cfg_raw["dropout"])
-        self.mlp_activation = str(mlp_cfg_raw.get("activation", "gelu"))
-        self.mlp_norm = str(mlp_cfg_raw.get("norm", "layernorm"))
+        self.mlp_hidden_dims = [
+            _to_int(value, "model_config.mlp_head.hidden_dims") for value in hidden_dims_raw
+        ]
+        self.mlp_dropout = _to_float(mlp_cfg["dropout"], "model_config.mlp_head.dropout")
+        self.mlp_activation = str(mlp_cfg.get("activation", "gelu"))
+        self.mlp_norm = str(mlp_cfg.get("norm", "layernorm"))
 
         reg_cfg_raw = model_config.get("regularization")
         if not isinstance(reg_cfg_raw, dict) or "dropout" not in reg_cfg_raw:
             raise ValueError("regularization.dropout must be provided for V3")
-        self.encoder_dropout = float(reg_cfg_raw["dropout"])
-        self.cross_attention_dropout = float(
-            reg_cfg_raw.get("cross_attention_dropout", self.encoder_dropout)
+        reg_cfg = _to_mapping(reg_cfg_raw, "model_config.regularization")
+        self.encoder_dropout = _to_float(reg_cfg["dropout"], "model_config.regularization.dropout")
+        self.cross_attention_dropout = _to_float(
+            reg_cfg.get("cross_attention_dropout", self.encoder_dropout),
+            "model_config.regularization.cross_attention_dropout",
         )
-        self.token_dropout = float(reg_cfg_raw.get("token_dropout", 0.0))
-        self.stochastic_depth = float(reg_cfg_raw.get("stochastic_depth", 0.0))
+        self.token_dropout = _to_float(
+            reg_cfg.get("token_dropout", 0.0),
+            "model_config.regularization.token_dropout",
+        )
+        self.stochastic_depth = _to_float(
+            reg_cfg.get("stochastic_depth", 0.0),
+            "model_config.regularization.stochastic_depth",
+        )
 
         # Optional toggles retained as placeholders for compatibility
         self._unused_geometry_cfg = model_config.get("geometry")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 import torch.nn.functional as functional
@@ -53,7 +54,7 @@ class SchedulerConfig:
     pct_start: float = 0.2
     div_factor: float = 25.0
     final_div_factor: float = 10000.0
-    anneal_strategy: str = "cos"
+    anneal_strategy: Literal["cos", "linear"] = "cos"
 
 
 class Trainer:
@@ -83,7 +84,7 @@ class Trainer:
         self.total_epochs = total_epochs
         self.steps_per_epoch = max(1, steps_per_epoch)
         self.ohem_strategy = ohem_strategy
-        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)  # type: ignore[attr-defined]
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
 
@@ -196,11 +197,12 @@ class Trainer:
                 loss = self._select_loss(output=output, batch=prepared_batch)
 
             if self.use_amp:
-                self.scaler.scale(loss).backward()
+                scaled_loss = self.scaler.scale(loss)
+                torch.autograd.backward(scaled_loss)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                loss.backward()
+                torch.autograd.backward(loss)
                 self.optimizer.step()
 
             if self.scheduler is not None:

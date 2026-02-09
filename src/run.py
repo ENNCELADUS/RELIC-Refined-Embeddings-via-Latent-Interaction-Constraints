@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Literal, cast
 
 import numpy as np
 import torch
@@ -15,7 +17,17 @@ from src.evaluate import Evaluator
 from src.model import V3
 from src.train import NoOpStrategy, StagedUnfreezeStrategy, Trainer
 from src.train.base import OptimizerConfig, SchedulerConfig
-from src.utils.config import ConfigDict, extract_model_kwargs, get_section, load_config
+from src.utils.config import (
+    ConfigDict,
+    as_bool,
+    as_float,
+    as_int,
+    as_str,
+    as_str_list,
+    extract_model_kwargs,
+    get_section,
+    load_config,
+)
 from src.utils.data_io import build_dataloaders
 from src.utils.device import resolve_device
 from src.utils.distributed import initialize_distributed
@@ -29,6 +41,34 @@ from src.utils.logging import (
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 
 ROOT_LOGGER = logging.getLogger(__name__)
+AnnealStrategy = Literal["cos", "linear"]
+ModelFactory = Callable[[ConfigDict], nn.Module]
+
+
+def _build_v3_model(model_kwargs: ConfigDict) -> nn.Module:
+    """Build V3 model instance."""
+    return V3(**model_kwargs)
+
+
+MODEL_FACTORIES: dict[str, ModelFactory] = {
+    "v3": _build_v3_model,
+}
+
+
+def _parse_anneal_strategy(value: object) -> AnnealStrategy:
+    """Parse OneCycle anneal strategy."""
+    anneal_strategy = as_str(value, "training_config.scheduler.anneal_strategy").lower()
+    if anneal_strategy not in {"cos", "linear"}:
+        raise ValueError("training_config.scheduler.anneal_strategy must be 'cos' or 'linear'")
+    return cast(AnnealStrategy, anneal_strategy)
+
+
+def _metrics_from_config(eval_cfg: ConfigDict) -> list[str]:
+    """Extract configured metric names."""
+    metrics = eval_cfg.get("metrics", [])
+    if not isinstance(metrics, Sequence) or isinstance(metrics, (str, bytes)):
+        raise ValueError("evaluate.metrics must be a sequence")
+    return as_str_list(metrics, "evaluate.metrics")
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,8 +108,9 @@ def build_model(config: ConfigDict) -> nn.Module:
         ValueError: If the model name is not supported.
     """
     model_name, model_kwargs = extract_model_kwargs(config)
-    if model_name == "v3":
-        return V3(**model_kwargs)
+    factory = MODEL_FACTORIES.get(model_name)
+    if factory is not None:
+        return factory(model_kwargs)
     raise ValueError(f"Unknown model: {model_name}")
 
 
@@ -98,38 +139,61 @@ def build_trainer(
     sampling_cfg = get_section(dataloader_cfg, "sampling")
 
     optimizer_config = OptimizerConfig(
-        optimizer_type=str(optimizer_cfg.get("type", "adamw")),
-        lr=float(optimizer_cfg.get("lr", 1e-4)),
-        beta1=float(optimizer_cfg.get("beta1", 0.9)),
-        beta2=float(optimizer_cfg.get("beta2", 0.999)),
-        eps=float(optimizer_cfg.get("eps", 1e-8)),
-        weight_decay=float(optimizer_cfg.get("weight_decay", 0.0)),
+        optimizer_type=as_str(optimizer_cfg.get("type", "adamw"), "training_config.optimizer.type"),
+        lr=as_float(optimizer_cfg.get("lr", 1e-4), "training_config.optimizer.lr"),
+        beta1=as_float(optimizer_cfg.get("beta1", 0.9), "training_config.optimizer.beta1"),
+        beta2=as_float(optimizer_cfg.get("beta2", 0.999), "training_config.optimizer.beta2"),
+        eps=as_float(optimizer_cfg.get("eps", 1e-8), "training_config.optimizer.eps"),
+        weight_decay=as_float(
+            optimizer_cfg.get("weight_decay", 0.0),
+            "training_config.optimizer.weight_decay",
+        ),
     )
     scheduler_config = SchedulerConfig(
-        scheduler_type=str(scheduler_cfg.get("type", "none")),
-        max_lr=float(scheduler_cfg.get("max_lr", optimizer_config.lr)),
-        pct_start=float(scheduler_cfg.get("pct_start", 0.2)),
-        div_factor=float(scheduler_cfg.get("div_factor", 25.0)),
-        final_div_factor=float(scheduler_cfg.get("final_div_factor", 10000.0)),
-        anneal_strategy=str(scheduler_cfg.get("anneal_strategy", "cos")),
+        scheduler_type=as_str(scheduler_cfg.get("type", "none"), "training_config.scheduler.type"),
+        max_lr=as_float(
+            scheduler_cfg.get("max_lr", optimizer_config.lr), "training_config.scheduler.max_lr"
+        ),
+        pct_start=as_float(
+            scheduler_cfg.get("pct_start", 0.2),
+            "training_config.scheduler.pct_start",
+        ),
+        div_factor=as_float(
+            scheduler_cfg.get("div_factor", 25.0),
+            "training_config.scheduler.div_factor",
+        ),
+        final_div_factor=as_float(
+            scheduler_cfg.get("final_div_factor", 10000.0),
+            "training_config.scheduler.final_div_factor",
+        ),
+        anneal_strategy=_parse_anneal_strategy(scheduler_cfg.get("anneal_strategy", "cos")),
     )
 
-    sampling_strategy = str(sampling_cfg.get("strategy", "none")).lower()
+    sampling_strategy = as_str(
+        sampling_cfg.get("strategy", "none"), "data_config.dataloader.sampling.strategy"
+    ).lower()
     ohem_strategy = None
     if sampling_strategy == "ohem":
         ohem_strategy = OHEMSampleStrategy(
-            keep_ratio=float(sampling_cfg.get("keep_ratio", 0.5)),
-            min_keep=int(sampling_cfg.get("min_keep", 1)),
+            keep_ratio=as_float(
+                sampling_cfg.get("keep_ratio", 0.5),
+                "data_config.dataloader.sampling.keep_ratio",
+            ),
+            min_keep=as_int(
+                sampling_cfg.get("min_keep", 1), "data_config.dataloader.sampling.min_keep"
+            ),
         )
 
     device_cfg = get_section(config, "device_config")
-    total_epochs = int(training_cfg.get("epochs", 1))
+    total_epochs = as_int(training_cfg.get("epochs", 1), "training_config.epochs")
     return Trainer(
         model=model,
         device=device,
         optimizer_config=optimizer_config,
         scheduler_config=scheduler_config,
-        use_amp=bool(device_cfg.get("use_mixed_precision", False)),
+        use_amp=as_bool(
+            device_cfg.get("use_mixed_precision", False), "device_config.use_mixed_precision"
+        ),
         total_epochs=total_epochs,
         steps_per_epoch=steps_per_epoch,
         ohem_strategy=ohem_strategy,
@@ -156,7 +220,9 @@ def build_strategy(config: ConfigDict) -> NoOpStrategy | StagedUnfreezeStrategy:
             raise ValueError("strategy.initial_trainable_prefixes must be a list")
         prefixes = tuple(str(prefix) for prefix in prefixes_value)
         return StagedUnfreezeStrategy(
-            unfreeze_epoch=int(strategy_cfg.get("unfreeze_epoch", 1)),
+            unfreeze_epoch=as_int(
+                strategy_cfg.get("unfreeze_epoch", 1), "training_config.strategy.unfreeze_epoch"
+            ),
             initial_trainable_prefixes=prefixes,
         )
     return NoOpStrategy()
@@ -233,14 +299,22 @@ def run_training_stage(
         steps_per_epoch=len(dataloaders["train"]),
     )
     strategy = build_strategy(config)
-    evaluator = Evaluator(metrics=[str(metric) for metric in eval_cfg.get("metrics", [])])
+    evaluator = Evaluator(metrics=_metrics_from_config(eval_cfg))
 
-    monitor_metric = str(training_cfg.get("monitor_metric", "auprc")).lower()
+    monitor_metric = as_str(
+        training_cfg.get("monitor_metric", "auprc"), "training_config.monitor_metric"
+    ).lower()
     monitor_key = f"val_{monitor_metric}"
-    patience = int(training_cfg.get("early_stopping_patience", 5))
+    patience = as_int(
+        training_cfg.get("early_stopping_patience", 5),
+        "training_config.early_stopping_patience",
+    )
     early_stopping = EarlyStopping(patience=patience, mode="max")
-    epochs = int(training_cfg.get("epochs", 1))
-    save_best_only = bool(get_section(config, "run_config").get("save_best_only", True))
+    epochs = as_int(training_cfg.get("epochs", 1), "training_config.epochs")
+    save_best_only = as_bool(
+        get_section(config, "run_config").get("save_best_only", True),
+        "run_config.save_best_only",
+    )
 
     best_checkpoint_path = model_dir / "best_model.pth"
     csv_path = log_dir / "training_step.csv"
@@ -325,7 +399,7 @@ def run_evaluation_stage(
     _load_checkpoint(model=model, checkpoint_path=checkpoint_path, device=device)
     model.eval()
     eval_cfg = get_section(config, "evaluate")
-    evaluator = Evaluator(metrics=[str(metric) for metric in eval_cfg.get("metrics", [])])
+    evaluator = Evaluator(metrics=_metrics_from_config(eval_cfg))
     with torch.no_grad():
         metrics = evaluator.evaluate(
             model=model,
@@ -349,14 +423,16 @@ def execute_pipeline(config: ConfigDict) -> None:
     """
     run_cfg = get_section(config, "run_config")
     device_cfg = get_section(config, "device_config")
-    seed = int(run_cfg.get("seed", 0))
+    seed = as_int(run_cfg.get("seed", 0), "run_config.seed")
     set_global_seed(seed=seed)
-    initialize_distributed(ddp_enabled=bool(device_cfg.get("ddp_enabled", False)))
-    device = resolve_device(str(device_cfg.get("device", "cpu")))
+    initialize_distributed(
+        ddp_enabled=as_bool(device_cfg.get("ddp_enabled", False), "device_config.ddp_enabled")
+    )
+    device = resolve_device(as_str(device_cfg.get("device", "cpu"), "device_config.device"))
 
     dataloaders = build_dataloaders(config=config)
     model = build_model(config=config).to(device)
-    mode = str(run_cfg.get("mode", "full_pipeline")).lower()
+    mode = as_str(run_cfg.get("mode", "full_pipeline"), "run_config.mode").lower()
 
     pretrain_run_id = generate_run_id(run_cfg.get("pretrain_run_id"))
     finetune_run_id = generate_run_id(run_cfg.get("finetune_run_id"))
@@ -368,7 +444,7 @@ def execute_pipeline(config: ConfigDict) -> None:
         else None
     )
 
-    if mode == "pretrain_only":
+    if mode in {"pretrain_only", "train_only"}:
         run_training_stage(
             stage="pretrain",
             config=config,

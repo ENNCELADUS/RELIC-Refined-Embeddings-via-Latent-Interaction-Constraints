@@ -9,6 +9,7 @@ Loop:
 
 每新增一个 pipeline stage、一个 Trainer 能力（AMP、grad accum、DDP hooks）、或一类 metric/ckpt 行为，就走这轮。
 
+`Use $resume-from-helper, then follow the plan exactly.`
 `Use $ml-pipeline-workflow to create a config-driven pipeline with preprocess, train, evaluate stages and a Trainer class.`
 `Then use $helper-checkpoint with scope=pipeline slug=trainer-stage-<feature>.`
 
