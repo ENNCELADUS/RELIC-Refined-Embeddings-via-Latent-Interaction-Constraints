@@ -61,8 +61,7 @@ def _base_config(mode: str = "full_pipeline") -> ConfigDict:
         "run_config": {
             "mode": mode,
             "seed": 7,
-            "pretrain_run_id": "pretrain_case",
-            "finetune_run_id": "finetune_case",
+            "train_run_id": "train_case",
             "eval_run_id": "eval_case",
             "load_checkpoint_path": None,
             "save_best_only": True,
@@ -139,24 +138,22 @@ def test_execute_pipeline_writes_stage_logs_and_strict_csv_headers(
 
     run_module.execute_pipeline(_base_config(mode="full_pipeline"))
 
-    pretrain_log = tmp_path / "logs" / "v3" / "pretrain" / "pretrain_case" / "log.log"
-    finetune_log = tmp_path / "logs" / "v3" / "finetune" / "finetune_case" / "log.log"
+    train_log = tmp_path / "logs" / "v3" / "train" / "train_case" / "log.log"
     eval_log = tmp_path / "logs" / "v3" / "evaluate" / "eval_case" / "log.log"
-    assert pretrain_log.exists()
-    assert finetune_log.exists()
+    assert train_log.exists()
     assert eval_log.exists()
 
-    pretrain_text = pretrain_log.read_text(encoding="utf-8")
+    train_text = train_log.read_text(encoding="utf-8")
     eval_text = eval_log.read_text(encoding="utf-8")
-    assert "stage_start" in pretrain_text
-    assert "epoch_start" in pretrain_text
-    assert "epoch_complete" in pretrain_text
-    assert "stage_complete" in pretrain_text
-    assert "Epoch 1 step 1/2" in pretrain_text
+    assert "stage_start" in train_text
+    assert "epoch_start" in train_text
+    assert "epoch_complete" in train_text
+    assert "stage_complete" in train_text
+    assert "Epoch 1 step 1/2" in train_text
     assert "evaluation_metrics" in eval_text
     assert "evaluation_csv_written" in eval_text
 
-    training_csv = tmp_path / "logs" / "v3" / "pretrain" / "pretrain_case" / "training_step.csv"
+    training_csv = tmp_path / "logs" / "v3" / "train" / "train_case" / "training_step.csv"
     evaluate_csv = tmp_path / "logs" / "v3" / "evaluate" / "eval_case" / "evaluate.csv"
     assert training_csv.exists()
     assert evaluate_csv.exists()
@@ -184,7 +181,7 @@ def test_non_main_process_does_not_write_stage_artifacts(tmp_path: Path) -> None
             world_size=2,
         )
         best_checkpoint = run_module.run_training_stage(
-            stage="pretrain",
+            stage="train",
             config=config,
             model=model,
             device=torch.device("cpu"),
@@ -195,7 +192,7 @@ def test_non_main_process_does_not_write_stage_artifacts(tmp_path: Path) -> None
     finally:
         os.chdir(previous_cwd)
 
-    log_dir = tmp_path / "logs" / "v3" / "pretrain" / "rank1_case"
+    log_dir = tmp_path / "logs" / "v3" / "train" / "rank1_case"
     assert log_dir.exists()
     assert not (log_dir / "log.log").exists()
     assert not (log_dir / "training_step.csv").exists()

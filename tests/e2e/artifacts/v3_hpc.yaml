@@ -1,8 +1,7 @@
 run_config:
   mode: "full_pipeline"
   seed: 47
-  pretrain_run_id: "hpc_e2e_pretrain"
-  finetune_run_id: "hpc_e2e_finetune"
+  train_run_id: "hpc_e2e_train"
   eval_run_id: "hpc_e2e_eval"
   load_checkpoint_path: null
   save_best_only: true

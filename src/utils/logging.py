@@ -90,7 +90,7 @@ def prepare_stage_directories(model_name: str, stage: str, run_id: str) -> tuple
 
     Args:
         model_name: Model name (e.g. ``v3``).
-        stage: Stage name (pretrain/finetune/evaluate).
+        stage: Stage name (train/evaluate).
         run_id: Unique stage run ID.
 
     Returns:

@@ -422,13 +422,6 @@ class V3(nn.Module):
             "model_config.regularization.stochastic_depth",
         )
 
-        # Optional toggles retained as placeholders for compatibility
-        self._unused_geometry_cfg = model_config.get("geometry")
-        self._unused_inference_cfg = model_config.get("inference")
-        self._unused_spectral_norm = model_config.get("spectral_norm", False)
-        self._unused_mc_dropout_eval = model_config.get("use_mc_dropout_eval", False)
-        self._unused_mc_samples = model_config.get("mc_dropout_samples", 0)
-
         self.encoder = SiameseEncoder(
             input_dim=self.input_dim,
             d_model=self.d_model,

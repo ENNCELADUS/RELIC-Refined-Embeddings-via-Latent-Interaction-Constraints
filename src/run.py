@@ -350,6 +350,10 @@ def build_trainer(
             min_keep=as_int(
                 sampling_cfg.get("min_keep", 1), "data_config.dataloader.sampling.min_keep"
             ),
+            warmup_epochs=as_int(
+                sampling_cfg.get("warmup_epochs", 0),
+                "data_config.dataloader.sampling.warmup_epochs",
+            ),
         )
 
     device_cfg = get_section(config, "device_config")
@@ -432,19 +436,17 @@ def run_training_stage(
     dataloaders: dict[str, torch.utils.data.DataLoader[dict[str, torch.Tensor]]],
     run_id: str,
     distributed_context: DistributedContext,
-    checkpoint_to_load: Path | None = None,
 ) -> Path:
     """Run stage training loop.
 
     Args:
-        stage: Training stage name (`pretrain` or `finetune`).
+        stage: Training stage name (`train`).
         config: Global run configuration dictionary.
         model: Model to train.
         device: Target torch device.
         dataloaders: Split dataloaders keyed by `train`, `valid`, and `test`.
         run_id: Stage run identifier.
         distributed_context: Distributed process metadata.
-        checkpoint_to_load: Optional checkpoint to load before training.
 
     Returns:
         Path to the best checkpoint produced during the stage.
@@ -468,13 +470,6 @@ def run_training_stage(
     training_cfg = get_section(config, "training_config")
     validation_metrics = _training_validation_metrics(training_cfg)
     heartbeat_every_n_steps = _training_heartbeat_every_n_steps(training_cfg)
-
-    if checkpoint_to_load is not None:
-        if distributed_context.is_main_process:
-            log_stage_event(stage_logger, "checkpoint_load_start", path=checkpoint_to_load)
-        _load_checkpoint(model=model, checkpoint_path=checkpoint_to_load, device=device)
-        if distributed_context.is_main_process:
-            log_stage_event(stage_logger, "checkpoint_load_complete", path=checkpoint_to_load)
 
     trainer, loss_config = build_trainer(
         config=config,
@@ -723,8 +718,7 @@ def execute_pipeline(config: ConfigDict) -> None:
     ddp_find_unused_parameters = _ddp_find_unused_parameters(config)
     try:
         mode = as_str(run_cfg.get("mode", "full_pipeline"), "run_config.mode").lower()
-        pretrain_run_id = generate_run_id(run_cfg.get("pretrain_run_id"))
-        finetune_run_id = generate_run_id(run_cfg.get("finetune_run_id"))
+        train_run_id = generate_run_id(run_cfg.get("train_run_id"))
         eval_run_id = generate_run_id(run_cfg.get("eval_run_id"))
         load_checkpoint_value = run_cfg.get("load_checkpoint_path")
         load_checkpoint_path = (
@@ -734,13 +728,12 @@ def execute_pipeline(config: ConfigDict) -> None:
         )
         model_name, _ = extract_model_kwargs(config)
         stage_run_map: dict[str, str] = {
-            "pretrain": pretrain_run_id,
-            "finetune": finetune_run_id,
+            "train": train_run_id,
             "evaluate": eval_run_id,
         }
         stage_names_for_mode: dict[str, list[str]] = {
-            "train_only": ["pretrain"],
-            "full_pipeline": ["pretrain", "finetune", "evaluate"],
+            "train_only": ["train"],
+            "full_pipeline": ["train", "evaluate"],
             "eval_only": ["evaluate"],
         }
         selected_stages = stage_names_for_mode.get(mode)
@@ -828,56 +821,38 @@ def execute_pipeline(config: ConfigDict) -> None:
 
         if mode == "train_only":
             if distributed_context.is_main_process:
-                log_stage_event(stage_loggers["pretrain"], "stage_boundary_start", stage="pretrain")
+                log_stage_event(stage_loggers["train"], "stage_boundary_start", stage="train")
             run_training_stage(
-                stage="pretrain",
+                stage="train",
                 config=config,
                 model=model,
                 device=device,
                 dataloaders=dataloaders,
-                run_id=pretrain_run_id,
+                run_id=train_run_id,
                 distributed_context=distributed_context,
             )
             if distributed_context.is_main_process:
-                log_stage_event(stage_loggers["pretrain"], "stage_boundary_end", stage="pretrain")
+                log_stage_event(stage_loggers["train"], "stage_boundary_end", stage="train")
             return
 
         if mode == "full_pipeline":
             if distributed_context.is_main_process:
-                log_stage_event(stage_loggers["pretrain"], "stage_boundary_start", stage="pretrain")
-            pretrain_checkpoint = run_training_stage(
-                stage="pretrain",
+                log_stage_event(stage_loggers["train"], "stage_boundary_start", stage="train")
+            train_checkpoint = run_training_stage(
+                stage="train",
                 config=config,
                 model=model,
                 device=device,
                 dataloaders=dataloaders,
-                run_id=pretrain_run_id,
+                run_id=train_run_id,
                 distributed_context=distributed_context,
             )
             if distributed_context.is_main_process:
                 log_stage_event(
-                    stage_loggers["pretrain"],
+                    stage_loggers["train"],
                     "stage_boundary_end",
-                    stage="pretrain",
-                    checkpoint_path=pretrain_checkpoint,
-                )
-                log_stage_event(stage_loggers["finetune"], "stage_boundary_start", stage="finetune")
-            finetune_checkpoint = run_training_stage(
-                stage="finetune",
-                config=config,
-                model=model,
-                device=device,
-                dataloaders=dataloaders,
-                run_id=finetune_run_id,
-                distributed_context=distributed_context,
-                checkpoint_to_load=pretrain_checkpoint,
-            )
-            if distributed_context.is_main_process:
-                log_stage_event(
-                    stage_loggers["finetune"],
-                    "stage_boundary_end",
-                    stage="finetune",
-                    checkpoint_path=finetune_checkpoint,
+                    stage="train",
+                    checkpoint_path=train_checkpoint,
                 )
                 log_stage_event(stage_loggers["evaluate"], "stage_boundary_start", stage="evaluate")
             run_evaluation_stage(
@@ -886,7 +861,7 @@ def execute_pipeline(config: ConfigDict) -> None:
                 device=device,
                 dataloaders=dataloaders,
                 run_id=eval_run_id,
-                checkpoint_path=finetune_checkpoint,
+                checkpoint_path=train_checkpoint,
                 distributed_context=distributed_context,
             )
             if distributed_context.is_main_process:

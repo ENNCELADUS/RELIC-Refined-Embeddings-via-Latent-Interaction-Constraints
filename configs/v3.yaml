@@ -1,8 +1,7 @@
 run_config:
   mode: "full_pipeline"  # full_pipeline | train_only | eval_only
   seed: 47
-  pretrain_run_id: null
-  finetune_run_id: null
+  train_run_id: null
   eval_run_id: null
   load_checkpoint_path: null
   save_best_only: true

@@ -39,7 +39,7 @@ class _DummyModel(nn.Module):
 class PipelineCalls:
     """Recorded mocked pipeline calls."""
 
-    training: list[tuple[str, Path | None, str]] = field(default_factory=list)
+    training: list[tuple[str, str]] = field(default_factory=list)
     evaluation: list[tuple[Path, str]] = field(default_factory=list)
 
 
@@ -50,8 +50,7 @@ def base_config() -> ConfigDict:
         "run_config": {
             "mode": "full_pipeline",
             "seed": 7,
-            "pretrain_run_id": "pretrain_run",
-            "finetune_run_id": "finetune_run",
+            "train_run_id": "train_run",
             "eval_run_id": "eval_run",
             "load_checkpoint_path": "artifacts/input_checkpoint.pth",
             "save_best_only": True,
@@ -95,10 +94,9 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
         dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
         run_id: str,
         distributed_context: DistributedContext,
-        checkpoint_to_load: Path | None = None,
     ) -> Path:
         del config, model, device, dataloaders, distributed_context
-        calls.training.append((stage, checkpoint_to_load, run_id))
+        calls.training.append((stage, run_id))
         return Path(f"artifacts/{stage}_best_model.pth")
 
     def fake_run_evaluation_stage(
@@ -141,12 +139,9 @@ def test_execute_pipeline_full_pipeline(
 ) -> None:
     run_module.execute_pipeline(base_config)
 
-    assert patched_pipeline.training == [
-        ("pretrain", None, "pretrain_run"),
-        ("finetune", Path("artifacts/pretrain_best_model.pth"), "finetune_run"),
-    ]
+    assert patched_pipeline.training == [("train", "train_run")]
     assert patched_pipeline.evaluation == [
-        (Path("artifacts/finetune_best_model.pth"), "eval_run"),
+        (Path("artifacts/train_best_model.pth"), "eval_run"),
     ]
 
 
@@ -160,7 +155,7 @@ def test_execute_pipeline_train_only(
 
     run_module.execute_pipeline(base_config)
 
-    assert patched_pipeline.training == [("pretrain", None, "pretrain_run")]
+    assert patched_pipeline.training == [("train", "train_run")]
     assert patched_pipeline.evaluation == []
 
 
@@ -269,19 +264,9 @@ def test_execute_pipeline_staged_unfreeze_enables_ddp_find_unused(
         dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
         run_id: str,
         distributed_context: DistributedContext,
-        checkpoint_to_load: Path | None = None,
     ) -> Path:
-        del (
-            stage,
-            config,
-            model,
-            device,
-            dataloaders,
-            run_id,
-            distributed_context,
-            checkpoint_to_load,
-        )
-        return Path("artifacts/pretrain_best_model.pth")
+        del stage, config, model, device, dataloaders, run_id, distributed_context
+        return Path("artifacts/train_best_model.pth")
 
     monkeypatch.setattr(run_module, "build_dataloaders", fake_build_dataloaders)
     monkeypatch.setattr(run_module, "build_model", fake_build_model)

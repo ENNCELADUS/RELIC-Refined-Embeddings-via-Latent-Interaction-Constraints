@@ -1,9 +1,8 @@
 run_config:
   mode: "full_pipeline"
   seed: 47
-  pretrain_run_id: null
-  finetune_run_id: null
-  eval_run_id: null
+  train_run_id: "local_cpu_e2e_train"
+  eval_run_id: "local_cpu_e2e_eval"
   load_checkpoint_path: null
   save_best_only: true
 

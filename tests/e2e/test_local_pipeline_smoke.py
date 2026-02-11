@@ -103,35 +103,23 @@ def test_local_cpu_full_pipeline_smoke(tmp_path: Path, monkeypatch: pytest.Monke
     config = _resolve_data_paths(load_config(CONFIG_PATH))
     run_module.execute_pipeline(config=config)
 
-    pretrain_log_dir = tmp_path / "logs" / "v3" / "pretrain" / "local_cpu_e2e_pretrain"
-    finetune_log_dir = tmp_path / "logs" / "v3" / "finetune" / "local_cpu_e2e_finetune"
+    train_log_dir = tmp_path / "logs" / "v3" / "train" / "local_cpu_e2e_train"
     eval_log_dir = tmp_path / "logs" / "v3" / "evaluate" / "local_cpu_e2e_eval"
-    pretrain_model = (
-        tmp_path / "models" / "v3" / "pretrain" / "local_cpu_e2e_pretrain" / "best_model.pth"
-    )
-    finetune_model = (
-        tmp_path / "models" / "v3" / "finetune" / "local_cpu_e2e_finetune" / "best_model.pth"
-    )
-    assert pretrain_model.exists()
-    assert finetune_model.exists()
-    assert (pretrain_log_dir / "log.log").exists()
-    assert (finetune_log_dir / "log.log").exists()
+    train_model = tmp_path / "models" / "v3" / "train" / "local_cpu_e2e_train" / "best_model.pth"
+    assert train_model.exists()
+    assert (train_log_dir / "log.log").exists()
     assert (eval_log_dir / "log.log").exists()
 
-    pretrain_csv = pretrain_log_dir / "training_step.csv"
-    finetune_csv = finetune_log_dir / "training_step.csv"
+    train_csv = train_log_dir / "training_step.csv"
     evaluate_csv = eval_log_dir / "evaluate.csv"
-    assert pretrain_csv.exists()
-    assert finetune_csv.exists()
+    assert train_csv.exists()
     assert evaluate_csv.exists()
 
-    with pretrain_csv.open("r", encoding="utf-8", newline="") as handle:
-        pretrain_header = DictReader(handle).fieldnames
-    with finetune_csv.open("r", encoding="utf-8", newline="") as handle:
-        finetune_header = DictReader(handle).fieldnames
+    with train_csv.open("r", encoding="utf-8", newline="") as handle:
+        train_header = DictReader(handle).fieldnames
     with evaluate_csv.open("r", encoding="utf-8", newline="") as handle:
         eval_header = DictReader(handle).fieldnames
-    assert pretrain_header == [
+    assert train_header == [
         "Epoch",
         "Epoch Time",
         "Train Loss",
@@ -140,5 +128,4 @@ def test_local_cpu_full_pipeline_smoke(tmp_path: Path, monkeypatch: pytest.Monke
         "Val auroc",
         "Learning Rate",
     ]
-    assert finetune_header == pretrain_header
     assert eval_header == run_module.EVAL_CSV_COLUMNS

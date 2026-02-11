@@ -73,6 +73,9 @@ def _read_ppi_records(file_path: Path, max_samples: int | None) -> list[PPIPairR
 class PRINGPairDataset(Dataset[dict[str, torch.Tensor]]):
     """Synthetic embedding dataset generated from PRING pair identities.
 
+    TODO: Replace synthetic embedding generation with on-disk embedding
+    lookup from ``data_config.embeddings.cache_dir``.
+
     Args:
         file_path: PPI split file path.
         input_dim: Embedding feature dimension.
@@ -104,6 +107,9 @@ class PRINGPairDataset(Dataset[dict[str, torch.Tensor]]):
 
     def _build_embedding(self, protein_id: str) -> torch.Tensor:
         """Create deterministic synthetic embedding for one protein ID.
+
+        TODO: Load precomputed embeddings from file cache instead of
+        generating synthetic random tensors.
 
         Args:
             protein_id: Protein identifier.
@@ -240,6 +246,9 @@ def build_dataloaders(
 
     Args:
         config: Root configuration mapping.
+        distributed: Whether distributed data loading is enabled.
+        rank: Global rank for distributed loading.
+        world_size: Number of distributed processes.
 
     Returns:
         Split dataloader mapping with keys ``train``, ``valid``, and ``test``.

@@ -158,6 +158,7 @@ class Trainer:
         self,
         output: dict[str, torch.Tensor],
         batch: dict[str, torch.Tensor],
+        epoch_index: int,
     ) -> torch.Tensor:
         logits = output["logits"]
         labels = batch["label"].float()
@@ -177,7 +178,7 @@ class Trainer:
             loss_config=self.loss_config,
             reduction="none",
         )
-        selected_indices = self.ohem_strategy.select(per_sample)
+        selected_indices = self.ohem_strategy.select(per_sample, epoch_index=epoch_index)
         return per_sample[selected_indices].mean()
 
     def train_one_epoch(
@@ -206,7 +207,11 @@ class Trainer:
 
             with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
                 output = self._forward_model(prepared_batch)
-                loss = self._select_loss(output=output, batch=prepared_batch)
+                loss = self._select_loss(
+                    output=output,
+                    batch=prepared_batch,
+                    epoch_index=epoch_index,
+                )
 
             if self.use_amp:
                 scaled_loss = self.scaler.scale(loss)

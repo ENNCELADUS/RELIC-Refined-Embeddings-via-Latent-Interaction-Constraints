@@ -45,20 +45,27 @@ class OHEMSampleStrategy:
     Attributes:
         keep_ratio: Ratio of hardest examples to keep.
         min_keep: Minimum selected sample count.
+        warmup_epochs: Number of initial epochs that bypass OHEM.
     """
 
     keep_ratio: float = 0.5
     min_keep: int = 1
+    warmup_epochs: int = 0
 
-    def select(self, losses: torch.Tensor) -> torch.Tensor:
+    def select(self, losses: torch.Tensor, epoch_index: int = 0) -> torch.Tensor:
         """Select hard-sample indices.
 
         Args:
             losses: Per-sample loss tensor.
+            epoch_index: Zero-based epoch index.
 
         Returns:
             Indices of selected hard samples.
         """
+        if self.warmup_epochs < 0:
+            raise ValueError("warmup_epochs must be >= 0")
+        if epoch_index < self.warmup_epochs:
+            return torch.arange(losses.numel(), device=losses.device)
         return select_ohem_indices(
             losses=losses,
             keep_ratio=self.keep_ratio,

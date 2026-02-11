@@ -13,5 +13,14 @@ def test_select_ohem_indices_keeps_hardest() -> None:
 def test_ohem_strategy_respects_min_keep() -> None:
     losses = torch.tensor([0.3, 0.2, 0.1], dtype=torch.float32)
     strategy = OHEMSampleStrategy(keep_ratio=0.1, min_keep=2)
-    selected = strategy.select(losses)
+    selected = strategy.select(losses, epoch_index=0)
     assert selected.numel() == 2
+
+
+def test_ohem_strategy_honors_warmup_epochs() -> None:
+    losses = torch.tensor([0.3, 0.9, 0.1], dtype=torch.float32)
+    strategy = OHEMSampleStrategy(keep_ratio=0.34, min_keep=1, warmup_epochs=2)
+    warmup_selected = strategy.select(losses, epoch_index=0)
+    post_warmup_selected = strategy.select(losses, epoch_index=2)
+    assert warmup_selected.tolist() == [0, 1, 2]
+    assert post_warmup_selected.tolist() == [1, 0]
