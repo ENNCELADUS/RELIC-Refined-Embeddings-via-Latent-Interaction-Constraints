@@ -1,0 +1,15 @@
+2026-02-11 23:01:47 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - pipeline_bootstrap | ddp_enabled=True | is_distributed=True | local_rank=0 | log_dir=logs/v3/pretrain/hpc_e2e_pretrain | mode=full_pipeline | rank=0 | run_id=hpc_e2e_pretrain | seed=47 | stage=pretrain | world_size=4
+2026-02-11 23:01:47 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - device_resolved | requested_device=cuda | resolved_device=cuda:0
+2026-02-11 23:01:47 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - dataloaders_ready | test_batches=1 | test_samples=32 | train_batches=1 | train_samples=32 | valid_batches=1 | valid_samples=32
+2026-02-11 23:01:47 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - model_initialized | model_name=v3 | parameter_count=234721
+2026-02-11 23:01:50 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - ddp_wrap_complete | model_wrapped=True
+2026-02-11 23:01:50 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - stage_boundary_start | stage=pretrain
+2026-02-11 23:01:50 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - stage_start | log_dir=logs/v3/pretrain/hpc_e2e_pretrain | model_dir=models/v3/pretrain/hpc_e2e_pretrain | run_id=hpc_e2e_pretrain | stage=pretrain
+2026-02-11 23:01:50 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - training_config_applied | csv_path=logs/v3/pretrain/hpc_e2e_pretrain/training_step.csv | epochs=1 | heartbeat_every_n_steps=20 | monitor_metric=auprc | save_best_only=True | validation_metrics=auprc,auroc
+2026-02-11 23:01:50 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - epoch_start | epoch=1 | total_epochs=1
+2026-02-11 23:01:51 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - Epoch 1 step 1/1 | running_train_loss=0.6096 | lr=0.000043
+2026-02-11 23:01:53 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - training_csv_row_written | epoch=1 | path=logs/v3/pretrain/hpc_e2e_pretrain/training_step.csv
+2026-02-11 23:01:53 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - checkpoint_saved_best | epoch=1 | monitor_metric=val_auprc | monitor_value=0.631196 | path=models/v3/pretrain/hpc_e2e_pretrain/best_model.pth
+2026-02-11 23:01:53 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - epoch_complete | epoch=1 | epoch_seconds=2.376341 | monitor_metric=val_auprc | monitor_value=0.631196 | train_loss=0.609604 | val_loss=0.682790
+2026-02-11 23:01:53 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - stage_complete | best_checkpoint_path=models/v3/pretrain/hpc_e2e_pretrain/best_model.pth | run_id=hpc_e2e_pretrain | stage=pretrain | training_csv_path=logs/v3/pretrain/hpc_e2e_pretrain/training_step.csv
+2026-02-11 23:01:53 INFO relic.v3.pretrain.hpc_e2e_pretrain.rank0 - stage_boundary_end | checkpoint_path=models/v3/pretrain/hpc_e2e_pretrain/best_model.pth | stage=pretrain
