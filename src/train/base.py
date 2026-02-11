@@ -228,14 +228,15 @@ class Trainer:
             running_loss += float(loss.detach().item())
             if self._should_log_heartbeat(step=batch_count, total_steps=total_steps):
                 current_lr = float(self.optimizer.param_groups[0]["lr"])
-                self.logger.info(
-                    "Epoch %d step %d/%d | running_train_loss=%.4f | lr=%.6f",
-                    epoch_index + 1,
-                    batch_count,
-                    total_steps,
-                    running_loss / batch_count,
-                    current_lr,
-                )
+                if self.logger is not None:
+                    self.logger.info(
+                        "Epoch %d step %d/%d | running_train_loss=%.4f | lr=%.6f",
+                        epoch_index + 1,
+                        batch_count,
+                        total_steps,
+                        running_loss / batch_count,
+                        current_lr,
+                    )
 
         average_loss = running_loss / max(1, batch_count)
         current_lr = float(self.optimizer.param_groups[0]["lr"])
