@@ -5,6 +5,12 @@
 - **Goal**: Reproducible, config-driven pipelines for Pretraining, Finetuning, and Evaluation.
 - **Role**: Act as a careful junior engineer. Follow **Plan → Confirm → Code**.
 
+## Environment Requirement (Critical)
+- Always run Python-related commands inside the `relic` conda environment for this repository.
+- Required first step for Python work: `conda activate relic`
+- Applies to: `python`, `pytest`, `ruff`, `mypy`, notebook execution, and any script that invokes Python.
+- If `relic` is not active, stop and activate it before continuing.
+
 ## Code Style
 Act as a careful junior engineer with strong tooling.
 - **Core**: Write clean, efficient Python 3.10+. Prefer composition. Be concise.
@@ -31,7 +37,7 @@ Standard Deep Learning project layout:
 - `tests/`: Project tests (Unit, Integration, E2E).
 
 ## Build, Test, and Development Commands
-- **Environment**: `conda activate relic`
+- **Environment (required before Python commands)**: `conda activate relic`
 - **Linting**: `ruff check --fix .` (Fixes lint errors)
 - **Formatting**: `ruff format .` (Formats code)
 - **Testing**: `python -m pytest` (Runs all tests)

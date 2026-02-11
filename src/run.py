@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import random
 import time
 from collections.abc import Callable, Sequence
@@ -160,11 +161,47 @@ def _build_stage_logger(name: str, log_file: Path, enabled: bool) -> logging.Log
     return logger
 
 
+def _rank_from_env() -> int:
+    """Parse global rank from environment, defaulting to zero."""
+    rank_raw = os.environ.get("RANK", "0")
+    try:
+        return int(rank_raw)
+    except ValueError:
+        return 0
+
+
+def _configure_root_logging() -> None:
+    """Configure process-level logging; suppress non-main rank noise."""
+    logging.captureWarnings(True)
+    if _rank_from_env() == 0:
+        logging.basicConfig(level=logging.INFO, force=True)
+        return
+    logging.basicConfig(level=logging.CRITICAL, force=True)
+
+
 def _unwrap_model(model: nn.Module) -> nn.Module:
     """Return underlying model when wrapped by DDP."""
     if isinstance(model, DistributedDataParallel):
         return cast(nn.Module, model.module)
     return model
+
+
+def _ddp_find_unused_parameters(config: ConfigDict) -> bool:
+    """Return DDP ``find_unused_parameters`` setting from config."""
+    device_cfg = get_section(config, "device_config")
+    explicit_find_unused = device_cfg.get("find_unused_parameters")
+    if explicit_find_unused is not None:
+        return as_bool(explicit_find_unused, "device_config.find_unused_parameters")
+
+    training_cfg = get_section(config, "training_config")
+    strategy_cfg = training_cfg.get("strategy")
+    if not isinstance(strategy_cfg, dict):
+        return False
+    strategy_type = as_str(
+        strategy_cfg.get("type", "none"),
+        "training_config.strategy.type",
+    ).lower()
+    return strategy_type == "staged_unfreeze"
 
 
 def _build_stage_runtime(
@@ -683,6 +720,7 @@ def execute_pipeline(config: ConfigDict) -> None:
     distributed_context = initialize_distributed(
         ddp_enabled=as_bool(device_cfg.get("ddp_enabled", False), "device_config.ddp_enabled")
     )
+    ddp_find_unused_parameters = _ddp_find_unused_parameters(config)
     try:
         mode = as_str(run_cfg.get("mode", "full_pipeline"), "run_config.mode").lower()
         pretrain_run_id = generate_run_id(run_cfg.get("pretrain_run_id"))
@@ -775,6 +813,7 @@ def execute_pipeline(config: ConfigDict) -> None:
             model = DistributedDataParallel(
                 model,
                 device_ids=[distributed_context.local_rank] if device.type == "cuda" else None,
+                find_unused_parameters=ddp_find_unused_parameters,
             )
         if distributed_context.is_main_process:
             for stage in selected_stages:
@@ -782,6 +821,9 @@ def execute_pipeline(config: ConfigDict) -> None:
                     stage_loggers[stage],
                     "ddp_wrap_complete",
                     model_wrapped=distributed_context.is_distributed,
+                    find_unused_parameters=(
+                        ddp_find_unused_parameters if distributed_context.is_distributed else False
+                    ),
                 )
 
         if mode == "train_only":
@@ -876,7 +918,7 @@ def execute_pipeline(config: ConfigDict) -> None:
 
 def main() -> None:
     """Run CLI entrypoint."""
-    logging.basicConfig(level=logging.INFO)
+    _configure_root_logging()
     args = parse_args()
     config = load_config(args.config)
     ROOT_LOGGER.info("Loaded config: %s", args.config)

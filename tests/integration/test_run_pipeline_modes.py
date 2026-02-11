@@ -190,3 +190,108 @@ def test_execute_pipeline_removed_modes_raise(
     run_cfg["mode"] = deprecated_mode
     with pytest.raises(ValueError, match="Unsupported run mode"):
         run_module.execute_pipeline(base_config)
+
+
+def test_execute_pipeline_staged_unfreeze_enables_ddp_find_unused(
+    monkeypatch: pytest.MonkeyPatch,
+    base_config: ConfigDict,
+) -> None:
+    run_cfg = base_config["run_config"]
+    assert isinstance(run_cfg, dict)
+    run_cfg["mode"] = "train_only"
+
+    device_cfg = base_config["device_config"]
+    assert isinstance(device_cfg, dict)
+    device_cfg["ddp_enabled"] = True
+    device_cfg["device"] = "cpu"
+
+    training_cfg = base_config["training_config"]
+    assert isinstance(training_cfg, dict)
+    training_cfg["strategy"] = {
+        "type": "staged_unfreeze",
+        "unfreeze_epoch": 1,
+        "initial_trainable_prefixes": ["output_head"],
+    }
+
+    ddp_call: dict[str, object] = {}
+
+    class _FakeDDP(nn.Module):
+        def __init__(
+            self,
+            module: nn.Module,
+            device_ids: list[int] | None = None,
+            find_unused_parameters: bool = False,
+        ) -> None:
+            super().__init__()
+            self.module = module
+            ddp_call["device_ids"] = device_ids
+            ddp_call["find_unused_parameters"] = find_unused_parameters
+
+        def forward(self, *args: object, **kwargs: object) -> object:
+            return self.module(*args, **kwargs)
+
+    def fake_build_dataloaders(
+        config: ConfigDict,
+        distributed: bool = False,
+        rank: int = 0,
+        world_size: int = 1,
+    ) -> dict[str, DataLoader[dict[str, torch.Tensor]]]:
+        del config, distributed, rank, world_size
+        loader = DataLoader(_EmptyDataset(), batch_size=1)
+        return {"train": loader, "valid": loader, "test": loader}
+
+    def fake_build_model(config: ConfigDict) -> nn.Module:
+        del config
+        return _DummyModel()
+
+    def fake_initialize_distributed(ddp_enabled: bool) -> DistributedContext:
+        del ddp_enabled
+        return DistributedContext(
+            ddp_enabled=True,
+            is_distributed=True,
+            rank=0,
+            local_rank=0,
+            world_size=2,
+        )
+
+    def fake_cleanup_distributed(context: DistributedContext) -> None:
+        del context
+
+    def fake_resolve_device(device_name: str) -> torch.device:
+        del device_name
+        return torch.device("cpu")
+
+    def fake_run_training_stage(
+        stage: str,
+        config: ConfigDict,
+        model: nn.Module,
+        device: torch.device,
+        dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
+        run_id: str,
+        distributed_context: DistributedContext,
+        checkpoint_to_load: Path | None = None,
+    ) -> Path:
+        del (
+            stage,
+            config,
+            model,
+            device,
+            dataloaders,
+            run_id,
+            distributed_context,
+            checkpoint_to_load,
+        )
+        return Path("artifacts/pretrain_best_model.pth")
+
+    monkeypatch.setattr(run_module, "build_dataloaders", fake_build_dataloaders)
+    monkeypatch.setattr(run_module, "build_model", fake_build_model)
+    monkeypatch.setattr(run_module, "initialize_distributed", fake_initialize_distributed)
+    monkeypatch.setattr(run_module, "cleanup_distributed", fake_cleanup_distributed)
+    monkeypatch.setattr(run_module, "resolve_device", fake_resolve_device)
+    monkeypatch.setattr(run_module, "run_training_stage", fake_run_training_stage)
+    monkeypatch.setattr(run_module, "DistributedDataParallel", _FakeDDP)
+
+    run_module.execute_pipeline(base_config)
+
+    assert ddp_call["device_ids"] is None
+    assert ddp_call["find_unused_parameters"] is True

@@ -84,6 +84,10 @@ def distributed_barrier(context: DistributedContext) -> None:
         context: Distributed process metadata.
     """
     if context.is_distributed and dist.is_initialized():
+        backend = dist.get_backend()
+        if backend == "nccl" and torch.cuda.is_available():
+            dist.barrier(device_ids=[context.local_rank])
+            return
         dist.barrier()
 
 
