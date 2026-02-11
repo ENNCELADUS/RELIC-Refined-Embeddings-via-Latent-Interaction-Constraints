@@ -27,7 +27,7 @@ Checkpoint structured pipeline logging + strict CSV regression coverage + local 
 
 ## State Snapshot
 - Branch: scaffold
-f234330579ef7e1ba5ee5fce24c17fb47831c7a
+- Commit: 5f234330579ef7e1ba5ee5fce24c17fb47831c7a
 - Base (optional): 2ca8255836fb6e01ce148837f67fec418b454f3c
 - Uncommitted at start: yes
 - Data/experiment identifiers (if any): `hpc_e2e_pretrain`, `hpc_e2e_finetune`, `hpc_e2e_eval`, `local_cpu_e2e_pretrain`, `local_cpu_e2e_finetune`, `local_cpu_e2e_eval`, seed=47
