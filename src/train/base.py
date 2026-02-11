@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -76,6 +77,8 @@ class Trainer:
         total_epochs: int,
         steps_per_epoch: int,
         ohem_strategy: OHEMSampleStrategy | None = None,
+        logger: logging.Logger | None = None,
+        heartbeat_every_n_steps: int = 0,
     ) -> None:
         self.model = model
         self.device = device
@@ -86,6 +89,8 @@ class Trainer:
         self.total_epochs = total_epochs
         self.steps_per_epoch = max(1, steps_per_epoch)
         self.ohem_strategy = ohem_strategy
+        self.logger = logger
+        self.heartbeat_every_n_steps = max(0, int(heartbeat_every_n_steps))
         self.scaler = torch.amp.GradScaler(  # type: ignore[attr-defined]
             "cuda",
             enabled=self.use_amp,
@@ -178,11 +183,13 @@ class Trainer:
     def train_one_epoch(
         self,
         train_loader: DataLoader[dict[str, torch.Tensor]],
+        epoch_index: int = 0,
     ) -> dict[str, float]:
         """Run one full training epoch.
 
         Args:
             train_loader: Training data loader.
+            epoch_index: Zero-based epoch index used for heartbeat log messages.
 
         Returns:
             Aggregate epoch metrics, including average loss and learning rate.
@@ -190,6 +197,7 @@ class Trainer:
         self.model.train()
         running_loss = 0.0
         batch_count = 0
+        total_steps = max(1, len(train_loader))
 
         for batch in train_loader:
             batch_count += 1
@@ -213,7 +221,25 @@ class Trainer:
                 self.scheduler.step()
 
             running_loss += float(loss.detach().item())
+            if self._should_log_heartbeat(step=batch_count, total_steps=total_steps):
+                current_lr = float(self.optimizer.param_groups[0]["lr"])
+                self.logger.info(
+                    "Epoch %d step %d/%d | running_train_loss=%.4f | lr=%.6f",
+                    epoch_index + 1,
+                    batch_count,
+                    total_steps,
+                    running_loss / batch_count,
+                    current_lr,
+                )
 
         average_loss = running_loss / max(1, batch_count)
         current_lr = float(self.optimizer.param_groups[0]["lr"])
         return {"loss": average_loss, "lr": current_lr}
+
+    def _should_log_heartbeat(self, step: int, total_steps: int) -> bool:
+        """Return whether heartbeat logs should be emitted for this step."""
+        if self.logger is None:
+            return False
+        if step == 1 or step == total_steps:
+            return True
+        return self.heartbeat_every_n_steps > 0 and step % self.heartbeat_every_n_steps == 0

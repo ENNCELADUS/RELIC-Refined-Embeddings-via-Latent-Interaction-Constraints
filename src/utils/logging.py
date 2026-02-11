@@ -32,11 +32,22 @@ def setup_stage_logger(name: str, log_file: Path) -> logging.Logger:
     Returns:
         Configured logger instance.
     """
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    resolved_log_file = str(log_file.resolve())
     if logger.handlers:
-        return logger
+        has_expected_file_handler = any(
+            isinstance(handler, logging.FileHandler)
+            and str(Path(handler.baseFilename).resolve()) == resolved_log_file
+            for handler in logger.handlers
+        )
+        if has_expected_file_handler:
+            return logger
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handler.close()
     formatter = logging.Formatter(
         fmt="%(asctime)s %(levelname)s %(name)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -48,6 +59,30 @@ def setup_stage_logger(name: str, log_file: Path) -> logging.Logger:
     logger.addHandler(stream_handler)
     logger.addHandler(file_handler)
     return logger
+
+
+def log_stage_event(logger: logging.Logger, event: str, **fields: object) -> None:
+    """Emit a structured stage event line.
+
+    Args:
+        logger: Destination logger.
+        event: Event name.
+        **fields: Optional key-value fields to append.
+    """
+    if not fields:
+        logger.info(event)
+        return
+    formatted_fields = " | ".join(
+        f"{key}={_format_field_value(fields[key])}" for key in sorted(fields)
+    )
+    logger.info("%s | %s", event, formatted_fields)
+
+
+def _format_field_value(value: object) -> str:
+    """Format event field values in a stable human-readable form."""
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    return str(value)
 
 
 def prepare_stage_directories(model_name: str, stage: str, run_id: str) -> tuple[Path, Path]:

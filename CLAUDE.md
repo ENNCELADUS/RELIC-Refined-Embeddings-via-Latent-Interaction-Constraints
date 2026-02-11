@@ -27,7 +27,7 @@ Standard Deep Learning project layout:
 - `src/evaluate/`: Evaluation scripts and logic.
 - `src/utils/`: Shared utilities (logging, config parsing, device management).
 - `configs/`: YAML configuration files for experiments.
-- `scripts/`: Shell scripts for orchestration (e.g., `run_pipeline.sh`).
+- `scripts/`: Shell scripts for orchestration (e.g., `v3.sh`).
 - `tests/`: Project tests (Unit, Integration, E2E).
 
 ## Build, Test, and Development Commands

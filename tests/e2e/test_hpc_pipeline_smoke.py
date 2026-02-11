@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+from csv import DictReader
 from pathlib import Path
 
 import pytest
+import src.run as run_module
 import torch
-
 from src.utils.config import load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -20,18 +21,60 @@ def test_hpc_config_artifact_is_valid() -> None:
     """Validate the HPC test config can be parsed and has required DDP flags."""
     config = load_config(CONFIG_PATH)
     run_cfg = config["run_config"]
+    training_cfg = config["training_config"]
+    evaluate_cfg = config["evaluate"]
     device_cfg = config["device_config"]
     assert isinstance(run_cfg, dict)
+    assert isinstance(training_cfg, dict)
+    assert isinstance(evaluate_cfg, dict)
     assert isinstance(device_cfg, dict)
-    assert run_cfg["mode"] == "train_only"
+    assert run_cfg["mode"] == "full_pipeline"
     assert device_cfg["ddp_enabled"] is True
+
+    logging_cfg = training_cfg["logging"]
+    assert isinstance(logging_cfg, dict)
+    validation_metrics = logging_cfg["validation_metrics"]
+    assert isinstance(validation_metrics, list)
+    expected_training_headers = [
+        "Epoch",
+        "Epoch Time",
+        "Train Loss",
+        "Val Loss",
+        *[f"Val {metric}" for metric in validation_metrics],
+        "Learning Rate",
+    ]
+    assert expected_training_headers == [
+        "Epoch",
+        "Epoch Time",
+        "Train Loss",
+        "Val Loss",
+        "Val auprc",
+        "Val auroc",
+        "Learning Rate",
+    ]
+
+    eval_metrics = evaluate_cfg["metrics"]
+    assert isinstance(eval_metrics, list)
+    assert run_module.EVAL_CSV_COLUMNS == [
+        "split",
+        "auroc",
+        "auprc",
+        "accuracy",
+        "sensitivity",
+        "specificity",
+        "precision",
+        "recall",
+        "f1",
+        "mcc",
+    ]
+    assert set(run_module.EVAL_CSV_COLUMNS[1:]).issubset(set(eval_metrics))
 
 
 @pytest.mark.e2e
 @pytest.mark.gpu
 @pytest.mark.slow
-def test_hpc_ddp_train_only_smoke() -> None:
-    """Run optional torchrun smoke test for cluster environments."""
+def test_hpc_ddp_full_pipeline_smoke() -> None:
+    """Run optional full-pipeline torchrun smoke test for cluster environments."""
     if os.environ.get("RELIC_RUN_HPC_E2E", "0") != "1":
         pytest.skip("Set RELIC_RUN_HPC_E2E=1 to run HPC smoke test.")
     if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
@@ -55,3 +98,37 @@ def test_hpc_ddp_train_only_smoke() -> None:
         REPO_ROOT / "models" / "v3" / "pretrain" / "hpc_e2e_pretrain" / "best_model.pth"
     )
     assert expected_checkpoint.exists()
+
+    pretrain_csv = REPO_ROOT / "logs" / "v3" / "pretrain" / "hpc_e2e_pretrain" / "training_step.csv"
+    finetune_csv = REPO_ROOT / "logs" / "v3" / "finetune" / "hpc_e2e_finetune" / "training_step.csv"
+    evaluate_csv = REPO_ROOT / "logs" / "v3" / "evaluate" / "hpc_e2e_eval" / "evaluate.csv"
+    assert pretrain_csv.exists()
+    assert finetune_csv.exists()
+    assert evaluate_csv.exists()
+
+    config = load_config(CONFIG_PATH)
+    training_cfg = config["training_config"]
+    assert isinstance(training_cfg, dict)
+    logging_cfg = training_cfg["logging"]
+    assert isinstance(logging_cfg, dict)
+    validation_metrics = logging_cfg["validation_metrics"]
+    assert isinstance(validation_metrics, list)
+    expected_train_header = [
+        "Epoch",
+        "Epoch Time",
+        "Train Loss",
+        "Val Loss",
+        *[f"Val {metric}" for metric in validation_metrics],
+        "Learning Rate",
+    ]
+
+    with pretrain_csv.open("r", encoding="utf-8", newline="") as handle:
+        pretrain_header = DictReader(handle).fieldnames
+    with finetune_csv.open("r", encoding="utf-8", newline="") as handle:
+        finetune_header = DictReader(handle).fieldnames
+    with evaluate_csv.open("r", encoding="utf-8", newline="") as handle:
+        eval_header = DictReader(handle).fieldnames
+
+    assert pretrain_header == expected_train_header
+    assert finetune_header == expected_train_header
+    assert eval_header == run_module.EVAL_CSV_COLUMNS
