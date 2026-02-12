@@ -37,6 +37,7 @@ DEFAULT_ID_COLUMNS = (
 )
 DEFAULT_SEQUENCE_COLUMNS = ("sequence", "seq", "protein_sequence")
 FASTA_UNIPROT_PATTERN = re.compile(r"\|([^|]+)\|")
+EMBED_PROGRESS_LOGGER_NAME = "relic.embed.progress"
 
 
 @dataclass(frozen=True)
@@ -590,6 +591,31 @@ def _distributed_generation_context(allow_generation: bool) -> tuple[int, int] |
     return dist.get_rank(), world_size
 
 
+def _get_embed_progress_logger() -> logging.Logger:
+    """Return dedicated logger for distributed embedding progress."""
+    logger = logging.getLogger(EMBED_PROGRESS_LOGGER_NAME)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
+
+
+def _log_embedding_progress(message: str, *args: object) -> None:
+    """Log embedding progress from all ranks."""
+    if dist.is_available() and dist.is_initialized():
+        progress_logger = _get_embed_progress_logger()
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        progress_logger.info("[embed][rank=%d/%d] " + message, rank, world_size, *args)
+        return
+    LOGGER.info(message, *args)
+
+
 def _parse_str_dict(payload: object, name: str) -> dict[str, str]:
     """Parse an object payload as a string-to-string mapping."""
     if not isinstance(payload, dict):
@@ -727,7 +753,7 @@ def _generate_missing_embeddings(
         model_name=settings.model_name,
         requested_device=settings.device,
     )
-    LOGGER.info(
+    _log_embedding_progress(
         "Generating embeddings for %d proteins using model=%s device=%s",
         len(missing_ids),
         settings.model_name,
@@ -765,7 +791,7 @@ def _generate_missing_embeddings(
         generated_index_updates[protein_id] = relative_path
 
         if idx == total or idx % 100 == 0:
-            LOGGER.info("Embedded %d/%d proteins", idx, total)
+            _log_embedding_progress("Embedded %d/%d proteins", idx, total)
 
     return generated_index_updates
 
@@ -906,6 +932,7 @@ def ensure_embeddings_ready(
                 rank=distributed_rank,
                 world_size=distributed_world_size,
             )
+            _log_embedding_progress("Assigned %d proteins to this rank", len(local_ids))
             local_updates: dict[str, str] = {}
             local_error: str | None = None
             try:
