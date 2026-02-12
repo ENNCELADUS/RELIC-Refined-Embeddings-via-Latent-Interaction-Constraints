@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import torch
+import torch.distributed as dist
 
 from src.utils.config import ConfigDict, as_str, get_section
 
@@ -577,6 +578,55 @@ def _find_missing_or_invalid_ids(
     return missing_ids, invalid_ids
 
 
+def _distributed_generation_context(allow_generation: bool) -> tuple[int, int] | None:
+    """Return ``(rank, world_size)`` when distributed generation should be used."""
+    if not allow_generation:
+        return None
+    if not dist.is_available() or not dist.is_initialized():
+        return None
+    world_size = dist.get_world_size()
+    if world_size <= 1:
+        return None
+    return dist.get_rank(), world_size
+
+
+def _parse_str_dict(payload: object, name: str) -> dict[str, str]:
+    """Parse an object payload as a string-to-string mapping."""
+    if not isinstance(payload, dict):
+        raise ValueError(f"{name} must be a dictionary")
+    parsed: dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError(f"{name} must contain string keys and values")
+        parsed[key] = value
+    return parsed
+
+
+def _parse_str_list(payload: object, name: str) -> list[str]:
+    """Parse an object payload as a list of strings."""
+    if not isinstance(payload, list):
+        raise ValueError(f"{name} must be a list")
+    parsed: list[str] = []
+    for item in payload:
+        if not isinstance(item, str):
+            raise ValueError(f"{name} must contain strings")
+        parsed.append(item)
+    return parsed
+
+
+def _shard_ids_for_rank(
+    sorted_ids: Sequence[str],
+    rank: int,
+    world_size: int,
+) -> set[str]:
+    """Return rank-local shard of sorted protein IDs."""
+    shard: set[str] = set()
+    for idx, protein_id in enumerate(sorted_ids):
+        if idx % world_size == rank:
+            shard.add(protein_id)
+    return shard
+
+
 def _expected_metadata(
     source: str,
     model_name: str,
@@ -666,10 +716,9 @@ def _generate_missing_embeddings(
     sequences: Mapping[str, str],
     settings: _EmbeddingSettings,
     cache_dir: Path,
-    index: dict[str, str],
     input_dim: int,
     max_sequence_length: int,
-) -> None:
+) -> dict[str, str]:
     """Generate and persist missing embeddings for required proteins."""
     if settings.source != "esm3":
         raise ValueError(f"Unsupported embedding source: {settings.source}")
@@ -685,6 +734,7 @@ def _generate_missing_embeddings(
         resolved_device,
     )
 
+    generated_index_updates: dict[str, str] = {}
     total = len(missing_ids)
     for idx, protein_id in enumerate(sorted(missing_ids), start=1):
         sequence = sequences.get(protein_id)
@@ -712,10 +762,12 @@ def _generate_missing_embeddings(
         relative_path = _embedding_relative_path(protein_id)
         output_path = cache_dir / relative_path
         _save_tensor_atomic(path=output_path, tensor=embedding_tensor)
-        index[protein_id] = relative_path
+        generated_index_updates[protein_id] = relative_path
 
         if idx == total or idx % 100 == 0:
             LOGGER.info("Embedded %d/%d proteins", idx, total)
+
+    return generated_index_updates
 
 
 def _build_missing_ids_error_message(missing_ids: set[str]) -> str:
@@ -763,6 +815,11 @@ def ensure_embeddings_ready(
     required_ids = _collect_required_protein_ids(
         split_paths=split_paths,
     )
+    distributed_context = _distributed_generation_context(allow_generation=allow_generation)
+    distributed_rank: int | None = None
+    distributed_world_size: int | None = None
+    if distributed_context is not None:
+        distributed_rank, distributed_world_size = distributed_context
 
     cache_dir = settings.cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -800,6 +857,18 @@ def ensure_embeddings_ready(
         invalid_ids = {}
         ids_to_generate = set(required_ids)
 
+    if distributed_context is not None:
+        if distributed_rank is None or distributed_world_size is None:
+            raise RuntimeError("Distributed generation context must include rank and world size")
+
+        index_payload_list: list[object] = [dict(index) if distributed_rank == 0 else {}]
+        ids_payload_list: list[object] = [sorted(ids_to_generate) if distributed_rank == 0 else []]
+        dist.broadcast_object_list(index_payload_list, src=0)
+        dist.broadcast_object_list(ids_payload_list, src=0)
+
+        index = _parse_str_dict(index_payload_list[0], "broadcast embedding index")
+        ids_to_generate = set(_parse_str_list(ids_payload_list[0], "broadcast ids_to_generate"))
+
     if ids_to_generate:
         if not allow_generation:
             if invalid_ids:
@@ -807,24 +876,76 @@ def ensure_embeddings_ready(
             raise FileNotFoundError(_build_missing_ids_error_message(ids_to_generate))
 
         search_roots = _resolve_sequence_search_roots(config=config, split_paths=split_paths)
-        discovered_sequences = _discover_sequences(
-            required_ids=ids_to_generate,
-            search_roots=search_roots,
-            explicit_sequence_file=settings.sequence_file,
-            id_column_override=settings.id_column,
-            sequence_column_override=settings.sequence_column,
-        )
-        _generate_missing_embeddings(
-            missing_ids=ids_to_generate,
-            sequences=discovered_sequences,
-            settings=settings,
-            cache_dir=cache_dir,
-            index=index,
-            input_dim=input_dim,
-            max_sequence_length=max_sequence_length,
-        )
-        _write_json_atomic(path=index_path, payload=index)
-        _write_json_atomic(path=metadata_path, payload=expected_metadata)
+        if distributed_context is None:
+            discovered_sequences = _discover_sequences(
+                required_ids=ids_to_generate,
+                search_roots=search_roots,
+                explicit_sequence_file=settings.sequence_file,
+                id_column_override=settings.id_column,
+                sequence_column_override=settings.sequence_column,
+            )
+            generated_updates = _generate_missing_embeddings(
+                missing_ids=ids_to_generate,
+                sequences=discovered_sequences,
+                settings=settings,
+                cache_dir=cache_dir,
+                input_dim=input_dim,
+                max_sequence_length=max_sequence_length,
+            )
+            index.update(generated_updates)
+            _write_json_atomic(path=index_path, payload=index)
+            _write_json_atomic(path=metadata_path, payload=expected_metadata)
+        else:
+            if distributed_rank is None or distributed_world_size is None:
+                raise RuntimeError(
+                    "Distributed generation context must include rank and world size"
+                )
+            sorted_ids_to_generate = sorted(ids_to_generate)
+            local_ids = _shard_ids_for_rank(
+                sorted_ids=sorted_ids_to_generate,
+                rank=distributed_rank,
+                world_size=distributed_world_size,
+            )
+            local_updates: dict[str, str] = {}
+            local_error: str | None = None
+            try:
+                if local_ids:
+                    discovered_sequences = _discover_sequences(
+                        required_ids=local_ids,
+                        search_roots=search_roots,
+                        explicit_sequence_file=settings.sequence_file,
+                        id_column_override=settings.id_column,
+                        sequence_column_override=settings.sequence_column,
+                    )
+                    local_updates = _generate_missing_embeddings(
+                        missing_ids=local_ids,
+                        sequences=discovered_sequences,
+                        settings=settings,
+                        cache_dir=cache_dir,
+                        input_dim=input_dim,
+                        max_sequence_length=max_sequence_length,
+                    )
+            except (FileNotFoundError, RuntimeError, TypeError, ValueError) as error:
+                local_error = f"rank {distributed_rank}: {error}"
+
+            error_reports: list[object] = [None for _ in range(distributed_world_size)]
+            dist.all_gather_object(error_reports, local_error)
+            errors = [report for report in error_reports if isinstance(report, str) and report]
+            if errors:
+                raise RuntimeError("Distributed embedding generation failed: " + " | ".join(errors))
+
+            if distributed_rank == 0:
+                gathered_updates: list[object] = [None for _ in range(distributed_world_size)]
+                dist.gather_object(local_updates, gathered_updates, dst=0)
+                for rank_updates_payload in gathered_updates:
+                    index.update(_parse_str_dict(rank_updates_payload, "gathered index updates"))
+                _write_json_atomic(path=index_path, payload=index)
+                _write_json_atomic(path=metadata_path, payload=expected_metadata)
+            else:
+                dist.gather_object(local_updates, None, dst=0)
+
+            dist.barrier()
+            index = _load_index(index_path=index_path)
 
     final_missing_ids, final_invalid_ids = _find_missing_or_invalid_ids(
         required_ids=required_ids,

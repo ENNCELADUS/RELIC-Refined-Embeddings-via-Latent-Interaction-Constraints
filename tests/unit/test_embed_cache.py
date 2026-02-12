@@ -46,12 +46,12 @@ def _patch_fake_generator(
         sequences: dict[str, str],
         settings: object,
         cache_dir: Path,
-        index: dict[str, str],
         input_dim: int,
         max_sequence_length: int,
-    ) -> None:
+    ) -> dict[str, str]:
         del settings
         call_counter["count"] += 1
+        generated_index_updates: dict[str, str] = {}
         for protein_id in sorted(missing_ids):
             captured_sequences[protein_id] = sequences[protein_id]
             seq_len = min(len(sequences[protein_id]), max_sequence_length)
@@ -64,7 +64,8 @@ def _patch_fake_generator(
             output_path = cache_dir / relative_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(embedding, output_path)
-            index[protein_id] = relative_path
+            generated_index_updates[protein_id] = relative_path
+        return generated_index_updates
 
     monkeypatch.setattr(
         embed_module,

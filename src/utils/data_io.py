@@ -255,26 +255,17 @@ def build_dataloaders(
     seed = as_int(run_cfg.get("seed", 0), "run_config.seed")
 
     if distributed:
-        if rank != 0:
-            _distributed_barrier_if_initialized()
-            embedding_cache = ensure_embeddings_ready(
-                config=config,
-                split_paths=split_paths,
-                input_dim=input_dim,
-                max_sequence_length=max_sequence_length,
-                allow_generation=False,
-            )
-            _distributed_barrier_if_initialized()
-        else:
-            embedding_cache = ensure_embeddings_ready(
-                config=config,
-                split_paths=split_paths,
-                input_dim=input_dim,
-                max_sequence_length=max_sequence_length,
-                allow_generation=True,
-            )
-            _distributed_barrier_if_initialized()
-            _distributed_barrier_if_initialized()
+        distributed_initialized = dist.is_available() and dist.is_initialized()
+        allow_generation = True if distributed_initialized else rank == 0
+        _distributed_barrier_if_initialized()
+        embedding_cache = ensure_embeddings_ready(
+            config=config,
+            split_paths=split_paths,
+            input_dim=input_dim,
+            max_sequence_length=max_sequence_length,
+            allow_generation=allow_generation,
+        )
+        _distributed_barrier_if_initialized()
     else:
         embedding_cache = ensure_embeddings_ready(
             config=config,
