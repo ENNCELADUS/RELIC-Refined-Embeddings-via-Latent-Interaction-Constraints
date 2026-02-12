@@ -117,10 +117,10 @@ def test_trainer_heartbeat_logging(caplog: pytest.LogCaptureFixture) -> None:
         trainer.train_one_epoch(loader, epoch_index=0)
 
     messages = [record.getMessage() for record in caplog.records if record.name == logger_name]
-    assert any("Epoch 1 step 1/4" in message for message in messages)
-    assert any("Epoch 1 step 2/4" in message for message in messages)
-    assert any("Epoch 1 step 4/4" in message for message in messages)
-    assert not any("Epoch 1 step 3/4" in message for message in messages)
+    assert any("Epoch 1 | Step 1/4" in message for message in messages)
+    assert any("Epoch 1 | Step 2/4" in message for message in messages)
+    assert any("Epoch 1 | Step 4/4" in message for message in messages)
+    assert not any("Epoch 1 | Step 3/4" in message for message in messages)
 
 
 def test_training_csv_schema_header_order_regression() -> None:

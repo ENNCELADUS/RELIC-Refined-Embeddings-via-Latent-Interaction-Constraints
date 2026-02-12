@@ -49,7 +49,7 @@ def setup_stage_logger(name: str, log_file: Path) -> logging.Logger:
             logger.removeHandler(handler)
             handler.close()
     formatter = logging.Formatter(
-        fmt="%(asctime)s %(levelname)s %(name)s - %(message)s",
+        fmt="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     stream_handler = logging.StreamHandler()
@@ -69,20 +69,36 @@ def log_stage_event(logger: logging.Logger, event: str, **fields: object) -> Non
         event: Event name.
         **fields: Optional key-value fields to append.
     """
+    event_label = _format_label(event)
     if not fields:
-        logger.info(event)
+        logger.info(event_label)
         return
     formatted_fields = " | ".join(
-        f"{key}={_format_field_value(fields[key])}" for key in sorted(fields)
+        f"{_format_label(key)}: {_format_field_value(fields[key])}" for key in sorted(fields)
     )
-    logger.info("%s | %s", event, formatted_fields)
+    logger.info("%s | %s", event_label, formatted_fields)
 
 
 def _format_field_value(value: object) -> str:
     """Format event field values in a stable human-readable form."""
     if isinstance(value, float):
-        return f"{value:.6f}"
+        return f"{value:.4f}"
     return str(value)
+
+
+def _format_label(token: str) -> str:
+    """Convert machine-style tokens to concise human-readable labels."""
+    acronyms = {"auc", "auprc", "csv", "ddp", "lr"}
+    words = token.replace("-", "_").split("_")
+    formatted_words = []
+    for word in words:
+        if not word:
+            continue
+        if word.lower() in acronyms:
+            formatted_words.append(word.upper())
+            continue
+        formatted_words.append(word.capitalize())
+    return " ".join(formatted_words)
 
 
 def prepare_stage_directories(model_name: str, stage: str, run_id: str) -> tuple[Path, Path]:

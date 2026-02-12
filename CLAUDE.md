@@ -7,8 +7,8 @@
 
 ## Environment Requirement (Critical)
 - Always run Python-related commands inside the `relic` conda environment for this repository.
-- Required first step for Python work: `conda activate relic`
-- Applies to: `python`, `pytest`, `ruff`, `mypy`, notebook execution, and any script that invokes Python.
+- Activate with: `source /opt/homebrew/Caskroom/miniconda/base/etc/profile.d/conda.sh && conda activate relic`
+- Prefix every Bash tool call that runs Python, pytest, ruff, mypy, or any script with the command above.
 - If `relic` is not active, stop and activate it before continuing.
 
 ## Code Style

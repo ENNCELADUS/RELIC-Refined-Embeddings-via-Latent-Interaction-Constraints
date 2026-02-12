@@ -230,7 +230,7 @@ class Trainer:
                 current_lr = float(self.optimizer.param_groups[0]["lr"])
                 if self.logger is not None:
                     self.logger.info(
-                        "Epoch %d step %d/%d | running_train_loss=%.4f | lr=%.6f",
+                        "Epoch %d | Step %d/%d | Loss %.4f | LR %.4e",
                         epoch_index + 1,
                         batch_count,
                         total_steps,

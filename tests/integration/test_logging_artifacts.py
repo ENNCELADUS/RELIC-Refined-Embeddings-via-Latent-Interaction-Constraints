@@ -145,13 +145,13 @@ def test_execute_pipeline_writes_stage_logs_and_strict_csv_headers(
 
     train_text = train_log.read_text(encoding="utf-8")
     eval_text = eval_log.read_text(encoding="utf-8")
-    assert "stage_start" in train_text
-    assert "epoch_start" in train_text
-    assert "epoch_complete" in train_text
-    assert "stage_complete" in train_text
-    assert "Epoch 1 step 1/2" in train_text
-    assert "evaluation_metrics" in eval_text
-    assert "evaluation_csv_written" in eval_text
+    assert "Stage Start" in train_text
+    assert "Epoch Start" in train_text
+    assert "Epoch Done" in train_text
+    assert "Stage Done" in train_text
+    assert "Epoch 1 | Step 1/2" in train_text
+    assert "Evaluation Metrics" in eval_text
+    assert "CSV Written" in eval_text
 
     training_csv = tmp_path / "logs" / "v3" / "train" / "train_case" / "training_step.csv"
     evaluate_csv = tmp_path / "logs" / "v3" / "evaluate" / "eval_case" / "evaluate.csv"
