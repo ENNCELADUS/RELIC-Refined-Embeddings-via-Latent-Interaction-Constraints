@@ -17,6 +17,8 @@ import torch.distributed as dist
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from src.evaluate import Evaluator
 from src.model import V3
 from src.train import NoOpStrategy, StagedUnfreezeStrategy, Trainer
