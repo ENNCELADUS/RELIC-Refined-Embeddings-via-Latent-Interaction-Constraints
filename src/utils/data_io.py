@@ -12,7 +12,8 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 
 from src.embed import EmbeddingCacheManifest, ensure_embeddings_ready, load_cached_embedding
-from src.utils.config import ConfigDict, as_bool, as_int, get_section
+from src.utils.config import ConfigDict, as_bool, as_float, as_int, as_str, get_section
+from src.utils.data_samplers import StagedOHEMBatchSampler
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,11 @@ class PRINGPairDataset(Dataset[dict[str, torch.Tensor]]):
         self._max_sequence_length = int(max_sequence_length)
         self._cache_dir = cache_dir
         self._embedding_index = dict(embedding_index)
+        proteins = sorted(
+            {record.protein_a for record in self._records}
+            | {record.protein_b for record in self._records}
+        )
+        self._protein_to_id = {protein: index for index, protein in enumerate(proteins)}
 
         required_ids = {record.protein_a for record in self._records}
         required_ids.update(record.protein_b for record in self._records)
@@ -103,6 +109,10 @@ class PRINGPairDataset(Dataset[dict[str, torch.Tensor]]):
     def __len__(self) -> int:
         """Return dataset length."""
         return len(self._records)
+
+    def labels(self) -> list[int]:
+        """Return binary labels for all records."""
+        return [int(record.label) for record in self._records]
 
     def _load_embedding(self, protein_id: str) -> torch.Tensor:
         """Load one cached embedding tensor for a protein ID."""
@@ -122,12 +132,16 @@ class PRINGPairDataset(Dataset[dict[str, torch.Tensor]]):
         len_a = torch.tensor(emb_a.size(0), dtype=torch.long)
         len_b = torch.tensor(emb_b.size(0), dtype=torch.long)
         label = torch.tensor(float(record.label), dtype=torch.float32)
+        protein_a_id = torch.tensor(self._protein_to_id[record.protein_a], dtype=torch.long)
+        protein_b_id = torch.tensor(self._protein_to_id[record.protein_b], dtype=torch.long)
         return {
             "emb_a": emb_a,
             "emb_b": emb_b,
             "len_a": len_a,
             "len_b": len_b,
             "label": label,
+            "protein_a_id": protein_a_id,
+            "protein_b_id": protein_b_id,
         }
 
 
@@ -141,6 +155,8 @@ def _collate_batch(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tens
         "len_a": torch.stack([sample["len_a"] for sample in batch], dim=0),
         "len_b": torch.stack([sample["len_b"] for sample in batch], dim=0),
         "label": torch.stack([sample["label"] for sample in batch], dim=0),
+        "protein_a_id": torch.stack([sample["protein_a_id"] for sample in batch], dim=0),
+        "protein_b_id": torch.stack([sample["protein_b_id"] for sample in batch], dim=0),
     }
 
 
@@ -178,8 +194,50 @@ def _build_split_loader(
     )
 
     sampler: DistributedSampler[dict[str, torch.Tensor]] | None = None
+    batch_sampler: StagedOHEMBatchSampler | None = None
     should_shuffle = shuffle
-    if distributed:
+    sampling_raw = dataloader_cfg.get("sampling", {})
+    if not isinstance(sampling_raw, dict):
+        raise ValueError("data_config.dataloader.sampling must be a mapping")
+    sampling_cfg = sampling_raw
+    sampling_strategy = as_str(
+        sampling_cfg.get("strategy", "none"),
+        "data_config.dataloader.sampling.strategy",
+    ).lower()
+    is_train_loader = shuffle
+
+    if is_train_loader and sampling_strategy == "ohem":
+        labels = dataset.labels()
+        pos_count = sum(labels)
+        neg_count = len(labels) - pos_count
+        natural_ratio = float(neg_count) / float(max(1, pos_count))
+        batch_sampler = StagedOHEMBatchSampler(
+            labels=labels,
+            batch_size=batch_size,
+            warmup_pos_neg_ratio=as_float(
+                sampling_cfg.get("warmup_pos_neg_ratio", natural_ratio),
+                "data_config.dataloader.sampling.warmup_pos_neg_ratio",
+            ),
+            warmup_epochs=as_int(
+                sampling_cfg.get("warmup_epochs", 0),
+                "data_config.dataloader.sampling.warmup_epochs",
+            ),
+            pool_multiplier=as_int(
+                sampling_cfg.get("pool_multiplier", 32),
+                "data_config.dataloader.sampling.pool_multiplier",
+            ),
+            cap_protein=as_int(
+                sampling_cfg.get("cap_protein", 4),
+                "data_config.dataloader.sampling.cap_protein",
+            ),
+            rank=rank if distributed else 0,
+            world_size=world_size if distributed else 1,
+            shuffle=shuffle,
+            drop_last=drop_last,
+            seed=seed,
+        )
+        should_shuffle = False
+    if distributed and batch_sampler is None:
         sampler = DistributedSampler(
             dataset=dataset,
             num_replicas=world_size,
@@ -190,6 +248,14 @@ def _build_split_loader(
         )
         should_shuffle = False
 
+    if batch_sampler is not None:
+        return DataLoader(
+            dataset=dataset,
+            batch_sampler=batch_sampler,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=_collate_batch,
+        )
     return DataLoader(
         dataset=dataset,
         batch_size=batch_size,

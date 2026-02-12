@@ -171,14 +171,39 @@ class Trainer:
 
         if self.ohem_strategy is None:
             return loss
+        if epoch_index < self.ohem_strategy.warmup_epochs:
+            return loss
 
+        mining_loss_config = LossConfig(
+            loss_type=self.loss_config.loss_type,
+            pos_weight=1.0,
+            label_smoothing=0.0,
+        )
+        with torch.no_grad():
+            mining_loss = binary_classification_loss(
+                logits=logits,
+                labels=labels,
+                loss_config=mining_loss_config,
+                reduction="none",
+            )
+            selected_indices = self.ohem_strategy.select(
+                losses=mining_loss,
+                epoch_index=epoch_index,
+                protein_a_ids=batch.get("protein_a_id"),
+                protein_b_ids=batch.get("protein_b_id"),
+            )
+
+        ohem_loss_config = LossConfig(
+            loss_type=self.loss_config.loss_type,
+            pos_weight=1.0,
+            label_smoothing=self.loss_config.label_smoothing,
+        )
         per_sample = binary_classification_loss(
             logits=logits,
             labels=labels,
-            loss_config=self.loss_config,
+            loss_config=ohem_loss_config,
             reduction="none",
         )
-        selected_indices = self.ohem_strategy.select(per_sample, epoch_index=epoch_index)
         return per_sample[selected_indices].mean()
 
     def train_one_epoch(

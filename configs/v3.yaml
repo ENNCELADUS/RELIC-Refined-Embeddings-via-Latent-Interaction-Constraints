@@ -32,8 +32,8 @@ data_config:
     sampling:
       strategy: "ohem"  # none | ohem
       warmup_epochs: 5
-      keep_ratio: 0.5
-      min_keep: 32
+      pool_multiplier: 32
+      cap_protein: 4
 
 model_config:
   model: "v3"

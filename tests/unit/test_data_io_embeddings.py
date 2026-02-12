@@ -54,7 +54,19 @@ def _build_config(
     test_path: Path,
     input_dim: int,
     max_sequence_length: int,
+    sampling: dict[str, object] | None = None,
 ) -> ConfigDict:
+    dataloader_config: dict[str, object] = {
+        "train_dataset": str(train_path),
+        "valid_dataset": str(valid_path),
+        "test_dataset": str(test_path),
+        "num_workers": 0,
+        "pin_memory": False,
+        "drop_last": False,
+    }
+    if sampling is not None:
+        dataloader_config["sampling"] = sampling
+
     return {
         "run_config": {"seed": 11},
         "data_config": {
@@ -69,14 +81,7 @@ def _build_config(
                 "device": "cpu",
             },
             "max_sequence_length": max_sequence_length,
-            "dataloader": {
-                "train_dataset": str(train_path),
-                "valid_dataset": str(valid_path),
-                "test_dataset": str(test_path),
-                "num_workers": 0,
-                "pin_memory": False,
-                "drop_last": False,
-            },
+            "dataloader": dataloader_config,
         },
         "model_config": {
             "input_dim": input_dim,
@@ -137,6 +142,58 @@ def test_build_dataloaders_uses_cached_embeddings_and_padding(tmp_path: Path) ->
     assert tuple(train_batch["emb_b"].shape) == (2, 4, input_dim)
     assert sorted(train_batch["len_a"].tolist()) == [2, 3]
     assert sorted(train_batch["len_b"].tolist()) == [4, 4]
+    assert "protein_a_id" in train_batch
+    assert "protein_b_id" in train_batch
+
+
+def test_build_dataloaders_ohem_uses_pool_batch_sampler(tmp_path: Path) -> None:
+    benchmark_root = tmp_path / "benchmark"
+    benchmark_root.mkdir(parents=True, exist_ok=True)
+
+    train_path = tmp_path / "train.txt"
+    valid_path = tmp_path / "valid.txt"
+    test_path = tmp_path / "test.txt"
+    _write_split(train_path, [("P1", "P2", 1), ("P3", "P4", 1), ("P5", "P6", 0), ("P7", "P8", 0)])
+    _write_split(valid_path, [("P1", "P2", 1)])
+    _write_split(test_path, [("P5", "P6", 0)])
+
+    cache_dir = tmp_path / "cache"
+    input_dim = 4
+    max_sequence_length = 8
+    _write_cache(
+        cache_dir=cache_dir,
+        embeddings={
+            "P1": torch.ones((2, input_dim), dtype=torch.float32),
+            "P2": torch.full((2, input_dim), 2.0, dtype=torch.float32),
+            "P3": torch.full((2, input_dim), 3.0, dtype=torch.float32),
+            "P4": torch.full((2, input_dim), 4.0, dtype=torch.float32),
+            "P5": torch.full((2, input_dim), 5.0, dtype=torch.float32),
+            "P6": torch.full((2, input_dim), 6.0, dtype=torch.float32),
+            "P7": torch.full((2, input_dim), 7.0, dtype=torch.float32),
+            "P8": torch.full((2, input_dim), 8.0, dtype=torch.float32),
+        },
+        input_dim=input_dim,
+        max_sequence_length=max_sequence_length,
+    )
+
+    config = _build_config(
+        benchmark_root=benchmark_root,
+        cache_dir=cache_dir,
+        train_path=train_path,
+        valid_path=valid_path,
+        test_path=test_path,
+        input_dim=input_dim,
+        max_sequence_length=max_sequence_length,
+        sampling={
+            "strategy": "ohem",
+            "warmup_epochs": 0,
+            "pool_multiplier": 2,
+            "cap_protein": 4,
+        },
+    )
+    dataloaders = data_io.build_dataloaders(config=config)
+    train_batch = next(iter(dataloaders["train"]))
+    assert tuple(train_batch["label"].shape) == (4,)
 
 
 def test_build_dataloaders_calls_ensure_embeddings_ready(

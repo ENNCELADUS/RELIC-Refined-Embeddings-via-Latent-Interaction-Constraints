@@ -83,7 +83,7 @@ def test_trainer_runs_single_epoch() -> None:
         use_amp=False,
         total_epochs=1,
         steps_per_epoch=len(loader),
-        ohem_strategy=OHEMSampleStrategy(keep_ratio=0.5, min_keep=1),
+        ohem_strategy=OHEMSampleStrategy(target_batch_size=1, cap_protein=4),
     )
     metrics = trainer.train_one_epoch(loader)
     assert "loss" in metrics
@@ -121,6 +121,36 @@ def test_trainer_heartbeat_logging(caplog: pytest.LogCaptureFixture) -> None:
     assert any("Epoch 1 | Step 2/4" in message for message in messages)
     assert any("Epoch 1 | Step 4/4" in message for message in messages)
     assert not any("Epoch 1 | Step 3/4" in message for message in messages)
+
+
+def test_ohem_disables_pos_weight_for_selected_batch_loss() -> None:
+    model = TinyModel()
+    trainer = Trainer(
+        model=model,
+        device=torch.device("cpu"),
+        optimizer_config=OptimizerConfig(optimizer_type="adamw", lr=1e-2),
+        scheduler_config=SchedulerConfig(scheduler_type="none"),
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=5.0, label_smoothing=0.0),
+        use_amp=False,
+        total_epochs=1,
+        steps_per_epoch=1,
+        ohem_strategy=OHEMSampleStrategy(target_batch_size=2, cap_protein=4, warmup_epochs=0),
+    )
+    logits = torch.tensor([[0.0], [1.0], [-0.5]], dtype=torch.float32)
+    labels = torch.tensor([1.0, 0.0, 1.0], dtype=torch.float32)
+    batch = {
+        "label": labels,
+        "protein_a_id": torch.tensor([0, 1, 2], dtype=torch.long),
+        "protein_b_id": torch.tensor([3, 4, 5], dtype=torch.long),
+    }
+    loss = trainer._select_loss(output={"logits": logits}, batch=batch, epoch_index=0)
+    per_sample_unweighted = functional.binary_cross_entropy_with_logits(
+        logits.squeeze(-1),
+        labels,
+        reduction="none",
+    )
+    expected = per_sample_unweighted[torch.tensor([1, 2])].mean()
+    assert torch.isclose(loss, expected, atol=1e-6)
 
 
 def test_training_csv_schema_header_order_regression() -> None:

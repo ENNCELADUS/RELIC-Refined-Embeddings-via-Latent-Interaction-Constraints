@@ -306,7 +306,10 @@ def build_trainer(
     dataloader_cfg = get_section(data_cfg, "dataloader")
     optimizer_cfg = get_section(training_cfg, "optimizer")
     scheduler_cfg = get_section(training_cfg, "scheduler")
-    sampling_cfg = get_section(dataloader_cfg, "sampling")
+    sampling_raw = dataloader_cfg.get("sampling", {})
+    if not isinstance(sampling_raw, dict):
+        raise ValueError("data_config.dataloader.sampling must be a mapping")
+    sampling_cfg = sampling_raw
 
     optimizer_config = OptimizerConfig(
         optimizer_type=as_str(optimizer_cfg.get("type", "adamw"), "training_config.optimizer.type"),
@@ -344,13 +347,12 @@ def build_trainer(
     ).lower()
     ohem_strategy = None
     if sampling_strategy == "ohem":
+        batch_size = as_int(training_cfg.get("batch_size", 8), "training_config.batch_size")
         ohem_strategy = OHEMSampleStrategy(
-            keep_ratio=as_float(
-                sampling_cfg.get("keep_ratio", 0.5),
-                "data_config.dataloader.sampling.keep_ratio",
-            ),
-            min_keep=as_int(
-                sampling_cfg.get("min_keep", 1), "data_config.dataloader.sampling.min_keep"
+            target_batch_size=batch_size,
+            cap_protein=as_int(
+                sampling_cfg.get("cap_protein", 4),
+                "data_config.dataloader.sampling.cap_protein",
             ),
             warmup_epochs=as_int(
                 sampling_cfg.get("warmup_epochs", 0),
@@ -520,7 +522,11 @@ def run_training_stage(
         if distributed_context.is_main_process:
             log_stage_event(stage_logger, "epoch_start", epoch=epoch + 1)
         train_sampler = dataloaders["train"].sampler
-        if distributed_context.is_distributed and hasattr(train_sampler, "set_epoch"):
+        train_batch_sampler = getattr(dataloaders["train"], "batch_sampler", None)
+        set_epoch_fn = getattr(train_batch_sampler, "set_epoch", None)
+        if callable(set_epoch_fn):
+            set_epoch_fn(epoch)
+        elif distributed_context.is_distributed and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
         strategy.on_epoch_begin(trainer, epoch)
         train_stats = trainer.train_one_epoch(dataloaders["train"], epoch_index=epoch)

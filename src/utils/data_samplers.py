@@ -155,6 +155,8 @@ class StagedOHEMBatchSampler:
         warmup_epochs: int = 2,
         pool_multiplier: int = 16,
         cap_protein: int = 2,
+        rank: int = 0,
+        world_size: int = 1,
         shuffle: bool = True,
         drop_last: bool = False,
         seed: int | None = None,
@@ -171,6 +173,10 @@ class StagedOHEMBatchSampler:
             raise ValueError("pool_multiplier must be positive")
         if cap_protein <= 0:
             raise ValueError("cap_protein must be positive")
+        if world_size <= 0:
+            raise ValueError("world_size must be positive")
+        if rank < 0 or rank >= world_size:
+            raise ValueError("rank must be in [0, world_size)")
 
         try:
             processed_labels = [int(label) for label in labels]
@@ -181,8 +187,11 @@ class StagedOHEMBatchSampler:
             raise ValueError("labels must be binary (0 or 1)")
 
         self.labels = processed_labels
-        self.pos_indices = [idx for idx, label in enumerate(processed_labels) if label]
-        self.neg_indices = [idx for idx, label in enumerate(processed_labels) if not label]
+        full_pos_indices = [idx for idx, label in enumerate(processed_labels) if label]
+        full_neg_indices = [idx for idx, label in enumerate(processed_labels) if not label]
+
+        self.pos_indices = full_pos_indices[rank::world_size]
+        self.neg_indices = full_neg_indices[rank::world_size]
 
         if not self.pos_indices:
             raise ValueError("StagedOHEMBatchSampler requires at least one positive sample")
@@ -212,7 +221,7 @@ class StagedOHEMBatchSampler:
         if self.seed is not None:
             self._rng = random.Random(self.seed + epoch)
 
-    def __iter__(self) -> Iterator[list[int] | list[tuple[int, str, int, int]]]:
+    def __iter__(self) -> Iterator[list[int]]:
         """Yield either warmup batches or mining candidate pools."""
         if self._epoch < self.warmup_epochs:
             yield from self._iter_warmup()
@@ -250,7 +259,7 @@ class StagedOHEMBatchSampler:
             self._rng.shuffle(batch)
             yield batch
 
-    def _iter_mining(self) -> Iterator[list[tuple[int, str, int, int]]]:
+    def _iter_mining(self) -> Iterator[list[int]]:
         pos_indices = list(self.pos_indices)
         neg_indices = list(self.neg_indices)
         if self.shuffle:
@@ -275,7 +284,7 @@ class StagedOHEMBatchSampler:
 
             pool = pos_batch + neg_batch
             self._rng.shuffle(pool)
-            yield [(idx, "ohem_pool", self.batch_size, self.cap_protein) for idx in pool]
+            yield pool
 
     def _compute_pos_per_batch(self) -> int:
         denom = 1.0 + self.warmup_pos_neg_ratio

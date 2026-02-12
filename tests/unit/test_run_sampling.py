@@ -21,8 +21,8 @@ def test_build_trainer_wires_ohem_warmup_epochs() -> None:
             "dataloader": {
                 "sampling": {
                     "strategy": "ohem",
-                    "keep_ratio": 0.5,
-                    "min_keep": 2,
+                    "cap_protein": 4,
+                    "pool_multiplier": 32,
                     "warmup_epochs": 3,
                 }
             }
@@ -40,3 +40,5 @@ def test_build_trainer_wires_ohem_warmup_epochs() -> None:
     )
     assert trainer.ohem_strategy is not None
     assert trainer.ohem_strategy.warmup_epochs == 3
+    assert trainer.ohem_strategy.target_batch_size == 8
+    assert trainer.ohem_strategy.cap_protein == 4
