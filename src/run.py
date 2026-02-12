@@ -732,7 +732,7 @@ def execute_pipeline(config: ConfigDict) -> None:
             if distributed_context.is_main_process:
                 log_stage_event(
                     stage_logger,
-                    "bootstrap",
+                    "startup",
                     mode=mode,
                     run_id=stage_run_map[stage],
                     seed=seed,

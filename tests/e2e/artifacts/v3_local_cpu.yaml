@@ -26,7 +26,6 @@ data_config:
     train_dataset: "data/PRING/species_processed_data/human/BFS/human_train_ppi.txt"
     valid_dataset: "data/PRING/species_processed_data/human/BFS/human_val_ppi.txt"
     test_dataset: "data/PRING/species_processed_data/human/BFS/human_test_ppi.txt"
-    max_samples_per_split: 8
     num_workers: 0
     pin_memory: false
     drop_last: false

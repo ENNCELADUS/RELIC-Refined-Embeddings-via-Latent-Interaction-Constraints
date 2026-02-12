@@ -30,12 +30,11 @@ class PPIPairRecord:
     label: int
 
 
-def _read_ppi_records(file_path: Path, max_samples: int | None) -> list[PPIPairRecord]:
+def _read_ppi_records(file_path: Path) -> list[PPIPairRecord]:
     """Read tab-separated PPI records.
 
     Args:
         file_path: Input interaction file path.
-        max_samples: Optional max number of records to read.
 
     Returns:
         Parsed interaction records.
@@ -61,8 +60,6 @@ def _read_ppi_records(file_path: Path, max_samples: int | None) -> list[PPIPairR
                 label = 1
 
             records.append(PPIPairRecord(parts[0], parts[1], label))
-            if max_samples is not None and len(records) >= max_samples:
-                break
 
     if not records:
         raise ValueError(f"No valid PPI records found in {file_path}")
@@ -79,14 +76,13 @@ class PRINGPairDataset(Dataset[dict[str, torch.Tensor]]):
         max_sequence_length: int,
         cache_dir: Path,
         embedding_index: dict[str, str],
-        max_samples: int | None = None,
     ) -> None:
         if input_dim <= 0:
             raise ValueError("input_dim must be positive")
         if max_sequence_length <= 0:
             raise ValueError("max_sequence_length must be positive")
 
-        self._records = _read_ppi_records(file_path=file_path, max_samples=max_samples)
+        self._records = _read_ppi_records(file_path=file_path)
         self._input_dim = int(input_dim)
         self._max_sequence_length = int(max_sequence_length)
         self._cache_dir = cache_dir
@@ -148,23 +144,12 @@ def _collate_batch(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tens
     }
 
 
-def _parse_max_samples_per_split(config: ConfigDict) -> int | None:
-    """Parse ``data_config.dataloader.max_samples_per_split``."""
-    data_cfg = get_section(config, "data_config")
-    dataloader_cfg = get_section(data_cfg, "dataloader")
-    max_samples_value = dataloader_cfg.get("max_samples_per_split")
-    if max_samples_value is None:
-        return None
-    return as_int(max_samples_value, "data_config.dataloader.max_samples_per_split")
-
-
 def _build_split_loader(
     split_path: Path,
     config: ConfigDict,
     embedding_cache: EmbeddingCacheManifest,
     input_dim: int,
     max_sequence_length: int,
-    max_samples: int | None,
     seed: int,
     shuffle: bool,
     distributed: bool,
@@ -190,7 +175,6 @@ def _build_split_loader(
         max_sequence_length=max_sequence_length,
         cache_dir=embedding_cache.cache_dir,
         embedding_index=embedding_cache.index,
-        max_samples=max_samples,
     )
 
     sampler: DistributedSampler[dict[str, torch.Tensor]] | None = None
@@ -268,7 +252,6 @@ def build_dataloaders(
         data_cfg.get("max_sequence_length", 64),
         "data_config.max_sequence_length",
     )
-    max_samples = _parse_max_samples_per_split(config)
     seed = as_int(run_cfg.get("seed", 0), "run_config.seed")
 
     if distributed:
@@ -279,7 +262,6 @@ def build_dataloaders(
                 split_paths=split_paths,
                 input_dim=input_dim,
                 max_sequence_length=max_sequence_length,
-                max_samples_per_split=max_samples,
                 allow_generation=False,
             )
             _distributed_barrier_if_initialized()
@@ -289,7 +271,6 @@ def build_dataloaders(
                 split_paths=split_paths,
                 input_dim=input_dim,
                 max_sequence_length=max_sequence_length,
-                max_samples_per_split=max_samples,
                 allow_generation=True,
             )
             _distributed_barrier_if_initialized()
@@ -300,7 +281,6 @@ def build_dataloaders(
             split_paths=split_paths,
             input_dim=input_dim,
             max_sequence_length=max_sequence_length,
-            max_samples_per_split=max_samples,
             allow_generation=True,
         )
 
@@ -311,7 +291,6 @@ def build_dataloaders(
             embedding_cache=embedding_cache,
             input_dim=input_dim,
             max_sequence_length=max_sequence_length,
-            max_samples=max_samples,
             seed=seed,
             shuffle=True,
             distributed=distributed,
@@ -324,7 +303,6 @@ def build_dataloaders(
             embedding_cache=embedding_cache,
             input_dim=input_dim,
             max_sequence_length=max_sequence_length,
-            max_samples=max_samples,
             seed=seed + 1,
             shuffle=False,
             distributed=False,
@@ -337,7 +315,6 @@ def build_dataloaders(
             embedding_cache=embedding_cache,
             input_dim=input_dim,
             max_sequence_length=max_sequence_length,
-            max_samples=max_samples,
             seed=seed + 2,
             shuffle=False,
             distributed=False,

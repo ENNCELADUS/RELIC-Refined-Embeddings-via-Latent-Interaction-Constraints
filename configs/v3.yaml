@@ -26,63 +26,62 @@ data_config:
     train_dataset: "data/PRING/species_processed_data/human/BFS/human_train_ppi.txt"
     valid_dataset: "data/PRING/species_processed_data/human/BFS/human_val_ppi.txt"
     test_dataset: "data/PRING/species_processed_data/human/BFS/human_test_ppi.txt"
-    max_samples_per_split: 128
-    num_workers: 0
-    pin_memory: false
-    drop_last: false
+    num_workers: 4
+    pin_memory: true
+    drop_last: true
     sampling:
       strategy: "ohem"  # none | ohem
-      warmup_epochs: 1
+      warmup_epochs: 5
       keep_ratio: 0.5
-      min_keep: 8
+      min_keep: 32
 
 model_config:
   model: "v3"
   input_dim: 1536
-  d_model: 384
+  d_model: 512
   encoder_layers: 2
   cross_attn_layers: 2
-  n_heads: 12
+  n_heads: 8
   mlp_head:
-    hidden_dims: [256, 128, 64]
+    hidden_dims: [512, 256, 128]
     dropout: 0.20
     activation: "gelu"
     norm: "layernorm"
   regularization:
-    dropout: 0.15
+    dropout: 0.10
     token_dropout: 0.10
-    cross_attention_dropout: 0.15
+    cross_attention_dropout: 0.10
     stochastic_depth: 0.10
 
 training_config:
-  epochs: 3
-  batch_size: 16
-  early_stopping_patience: 2
+  epochs: 50
+  batch_size: 64
+  early_stopping_patience: 10
   monitor_metric: "auprc"
   logging:
-    validation_metrics: ["auprc", "auroc"]
+    validation_metrics: ["auprc", "auroc", "f1", "accuracy"]
   optimizer:
     type: "adamw"
-    lr: 0.00005
+    lr: 0.0001
     beta1: 0.9
     beta2: 0.999
     eps: 1.0e-8
-    weight_decay: 0.015
+    weight_decay: 0.05
   scheduler:
     type: "onecycle"
-    max_lr: 0.00005
-    pct_start: 0.20
+    max_lr: 0.0001
+    pct_start: 0.10
     div_factor: 25
     final_div_factor: 10000
     anneal_strategy: "cos"
   loss:
     type: "bce_with_logits"
     pos_weight: 1.0
-    label_smoothing: 0.02
+    label_smoothing: 0.05
   strategy:
-    type: "staged_unfreeze"
-    unfreeze_epoch: 1
-    initial_trainable_prefixes: ["output_head"]
+    type: null
+    unfreeze_epoch: 0
+    initial_trainable_prefixes: null
 
 evaluate:
   metrics:

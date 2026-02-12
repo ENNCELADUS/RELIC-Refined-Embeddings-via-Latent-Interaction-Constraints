@@ -73,7 +73,6 @@ def _build_config(
                 "train_dataset": str(train_path),
                 "valid_dataset": str(valid_path),
                 "test_dataset": str(test_path),
-                "max_samples_per_split": None,
                 "num_workers": 0,
                 "pin_memory": False,
                 "drop_last": False,
@@ -174,10 +173,9 @@ def test_build_dataloaders_calls_ensure_embeddings_ready(
         split_paths: list[Path],
         input_dim: int,
         max_sequence_length: int,
-        max_samples_per_split: int | None = None,
         allow_generation: bool = True,
     ) -> EmbeddingCacheManifest:
-        del config, split_paths, input_dim, max_sequence_length, max_samples_per_split
+        del config, split_paths, input_dim, max_sequence_length
         called["value"] = True
         assert allow_generation is True
         return EmbeddingCacheManifest(

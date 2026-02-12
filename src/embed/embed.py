@@ -148,7 +148,6 @@ def _parse_embedding_settings(config: ConfigDict) -> _EmbeddingSettings:
 
 def _collect_required_protein_ids(
     split_paths: Sequence[Path],
-    max_samples_per_split: int | None,
 ) -> set[str]:
     """Collect required protein IDs from configured split files."""
     required_ids: set[str] = set()
@@ -156,7 +155,6 @@ def _collect_required_protein_ids(
         if not split_path.exists():
             raise FileNotFoundError(f"Split dataset path not found: {split_path}")
 
-        valid_records = 0
         with split_path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 parts = [part.strip() for part in line.strip().split("\t")]
@@ -167,9 +165,6 @@ def _collect_required_protein_ids(
 
                 required_ids.add(parts[0])
                 required_ids.add(parts[1])
-                valid_records += 1
-                if max_samples_per_split is not None and valid_records >= max_samples_per_split:
-                    break
 
     if not required_ids:
         raise ValueError("No protein IDs found in configured split files")
@@ -741,7 +736,6 @@ def ensure_embeddings_ready(
     split_paths: Sequence[Path],
     input_dim: int,
     max_sequence_length: int,
-    max_samples_per_split: int | None = None,
     allow_generation: bool = True,
 ) -> EmbeddingCacheManifest:
     """Ensure all required embeddings exist and are valid before training/eval.
@@ -751,7 +745,6 @@ def ensure_embeddings_ready(
         split_paths: Train/valid/test split file paths.
         input_dim: Expected embedding dimension.
         max_sequence_length: Maximum sequence length.
-        max_samples_per_split: Optional split read cap for required-ID collection.
         allow_generation: Whether missing/invalid embeddings may be regenerated.
 
     Returns:
@@ -769,7 +762,6 @@ def ensure_embeddings_ready(
     settings = _parse_embedding_settings(config)
     required_ids = _collect_required_protein_ids(
         split_paths=split_paths,
-        max_samples_per_split=max_samples_per_split,
     )
 
     cache_dir = settings.cache_dir
