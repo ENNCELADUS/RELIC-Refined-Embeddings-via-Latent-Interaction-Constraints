@@ -20,7 +20,7 @@ The `Trainer` class encapsulates the mechanics of updating the model weights.
 
 **Does NOT:**
 *   **Validation**: Validation logic belongs to the `Evaluator`, called by the orchestrator.
-*   **Logging**: Logging is handled by the orchestrator via `src/utils/logging.py`.
+*   **Logging**: The trainer emits heartbeat logs to the provided logger, but file creation and stage management are handled by the orchestrator via `src/utils/logging.py`.
 *   **Checkpointing**: File I/O for saving models is managed by the orchestrator.
 *   **Global Config**: The Trainer receives only the specific configuration objects (optimizer cfg, scheduler cfg) it needs, not the entire global config.
 

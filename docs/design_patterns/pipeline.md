@@ -6,7 +6,7 @@ The DIPPI pipeline is a centralized, config-driven orchestration system controll
 
 1. **Centralized Orchestration**: The `run.py` module acts as the chief orchestrator. It manages the global state (configuration, seeds, devices) and drives the execution flow. Cross-module interactions are mediated by the orchestrator, not by direct calls between components.
 2. **Config-Driven Execution**: All behaviors—model hyperparameters, training duration, optimization strategies, and data paths—are defined in a YAML configuration file.
-3. **Stage-Based Workflow**: The pipeline supports pretrain, finetune, and evaluate stages, selected by run mode.
+3. **Stage-Based Workflow**: The pipeline supports train and evaluate stages, selected by run mode.
 
 ## Pipeline Stages
 
@@ -15,7 +15,7 @@ The DIPPI pipeline is a centralized, config-driven orchestration system controll
 Before any training begins, the orchestrator performs the following:
 
 *   **Config Loading**: Parses the YAML configuration using `src/utils/config.py`.
-*   **Run ID Management**: Assigns unique IDs for pretrain, finetune, and eval runs. If not provided, timestamps are generated automatically. See [Logging Overview](logging_overview.md) for naming conventions.
+*   **Run ID Management**: Assigns unique IDs for train and eval runs. If not provided, timestamps are generated automatically. See [Logging Overview](logging_overview.md) for naming conventions.
 *   **Device & Seeding**: Sets random seeds for reproducibility and initializes computation devices (CPU/GPU/DDP) via `src/utils/device.py` and `src/utils/distributed.py`.
 *   **Data Loading**: Instantiates data loaders using `src/utils/data_io.py`.
 *   **Stage Logging Bootstrap**: Creates stage loggers and artifact directories early so setup/runtime events are persisted in `log.log`.
@@ -23,12 +23,12 @@ Before any training begins, the orchestrator performs the following:
 ### 2. Model Initialization
 
 The orchestrator selects and instantiates the model architecture based on the `model_config` section.
-*   The model class (e.g., `V3`, `TUnA`) is dynamically selected from `src/model/`.
+*   The model class (e.g., `V3`) is dynamically selected from `src/model/`.
 *   Only the configuration parameters relevant to the specific architecture are passed to its constructor.
 
-### 3. Train Stages (Pretrain / Finetune)
+### 3. Train Stage
 
-**Role**: Train the model from scratch (or initial weights) on a pretext task or base dataset.
+**Role**: Train the model from scratch (or initial weights) on a dataset.
 
 **Workflow**:
 1.  **Trainer Instantiation**: A generic `Trainer` is created with stage optimizer/scheduler config and centralized loss config (`training_config.loss`).
@@ -47,7 +47,7 @@ The orchestrator selects and instantiates the model architecture based on the `m
 
 **Workflow**:
 1.  **Metric Selection**: Metrics are parsed from the `evaluate.metrics` config section.
-2.  **Inference**: The `Evaluator` runs a validation-like pass in `eval` mode with `torch.no_grad()`.
+2.  **Metric Calculation**: The `Evaluator` runs a validation-like pass in `eval` mode with `torch.no_grad()`.
 3.  **Result Logging**: Final metrics are appended to `logs/{model}/evaluate/{run_id}/evaluate.csv`.
 
 ## Artifact Contracts
@@ -63,8 +63,8 @@ The orchestrator selects and instantiates the model architecture based on the `m
 
 The pipeline supports three strict execution modes defined in `run_config.mode`:
 
-*   `full_pipeline`: Runs pretraining, then automatically loads the resulting best model for finetuning.
-*   `train_only`: Runs pretraining and saves the best model. No input checkpoint required.
+*   `full_pipeline`: Runs training, then automatically loads the resulting best model for evaluation.
+*   `train_only`: Runs training and saves the best model.
 *   `eval_only`: Loads a checkpoint and runs the evaluation protocol.
 
 ## Launcher Disposition

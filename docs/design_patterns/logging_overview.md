@@ -15,16 +15,14 @@ All artifacts are stored under the `logs/` and `models/` directories, organized 
 
 ### Logging (`logs/`)
 
-*   **Pretrain Logs**: `logs/{model}/pretrain/<run_id>/`
-*   **Finetune Logs**: `logs/{model}/finetune/<run_id>/`
+*   **Train Logs**: `logs/{model}/train/<run_id>/`
 *   **Evaluation Logs**: `logs/{model}/evaluate/<run_id>/`
 
 **Note**: The `<run_id>` is either provided in the config or automatically generated (timestamped) by the orchestrator.
 
 ### Checkpoints (`models/`)
 
-*   **Pretrain Models**: `models/{model}/pretrain/<run_id>/`
-*   **Finetune Models**: `models/{model}/finetune/<run_id>/`
+*   **Train Models**: `models/{model}/train/<run_id>/`
 
 ## Artifact Types
 
@@ -44,7 +42,7 @@ All artifacts are stored under the `logs/` and `models/` directories, organized 
 *   **Rank behavior**: only rank 0 writes file artifacts and human-readable stage logs.
 
 ### 2. `training_step.csv`
-*   **Location**: Pretrain and Finetune directories.
+*   **Location**: Train directory.
 *   **Role**: structured time-series data for training curves.
 *   **Schema (strict order)**:
     *   `Epoch`: Integer epoch number.

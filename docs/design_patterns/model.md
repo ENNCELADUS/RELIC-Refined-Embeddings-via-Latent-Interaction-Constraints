@@ -73,8 +73,6 @@ def build_model(cfg):
     
     if name == "v3":
         return V3(**kwargs)
-    elif name == "tuna":
-        return TUnA(**kwargs)
     else:
         raise ValueError(f"Unknown model: {name}")
 ```
