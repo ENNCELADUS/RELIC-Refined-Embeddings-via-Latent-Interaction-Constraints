@@ -79,9 +79,7 @@ training_config:
     pos_weight: 1.0
     label_smoothing: 0.05
   strategy:
-    type: null
-    unfreeze_epoch: 0
-    initial_trainable_prefixes: null
+    type: "none"
 
 evaluate:
   metrics:
