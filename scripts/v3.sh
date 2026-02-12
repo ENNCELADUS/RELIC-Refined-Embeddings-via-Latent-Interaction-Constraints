@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH -J V3
-#SBATCH -p hexm_l40
-#SBATCH -A hexm
+#SBATCH -p critical
+#SBATCH -A hexm-critical
 #SBATCH -N 1
 #SBATCH -t 4-00:00:00
 #SBATCH --mem=300G
 #SBATCH --cpus-per-task=32
-#SBATCH --gres=gpu:NVIDIAL40:4
+#SBATCH --gres=gpu:NVIDIATITANRTX:4
+#SBATCH --exclude=ai_gpu27,ai_gpu28,ai_gpu29
 #SBATCH --output=logs/v3/slurm_%j.out
 #SBATCH --error=logs/v3/slurm_%j.err
 #SBATCH --mail-type=ALL
@@ -14,9 +15,9 @@
 
 set -euo pipefail
 
-cd /Users/richardwang/Documents/relic
-# source ~/.bashrc
-conda activate relic
+cd /public/home/wangar2023/relic/
+source ~/.bashrc
+conda activate esm
 CONFIG_PATH="${1:-configs/v3.yaml}"
 
 # Automatically detect number of GPUs from SLURM allocation
