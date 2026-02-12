@@ -1,4 +1,0 @@
-2026-02-11 23:01:47 INFO relic.v3.evaluate.hpc_e2e_eval.rank0 - pipeline_bootstrap | ddp_enabled=True | is_distributed=True | local_rank=0 | log_dir=logs/v3/evaluate/hpc_e2e_eval | mode=full_pipeline | rank=0 | run_id=hpc_e2e_eval | seed=47 | stage=evaluate | world_size=4
-2026-02-11 23:01:47 INFO relic.v3.evaluate.hpc_e2e_eval.rank0 - device_resolved | requested_device=cuda | resolved_device=cuda:0
-2026-02-11 23:01:47 INFO relic.v3.evaluate.hpc_e2e_eval.rank0 - dataloaders_ready | test_batches=1 | test_samples=32 | train_batches=1 | train_samples=32 | valid_batches=1 | valid_samples=32
-2026-02-11 23:01:50 INFO relic.v3.evaluate.hpc_e2e_eval.rank0 - ddp_wrap_complete | model_wrapped=True

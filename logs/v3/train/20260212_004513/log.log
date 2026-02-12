@@ -1,0 +1,27 @@
+2026-02-12 00:45:13 INFO relic.v3.train.20260212_004513.rank0 - pipeline_bootstrap | ddp_enabled=True | is_distributed=True | local_rank=0 | log_dir=logs/v3/train/20260212_004513 | mode=full_pipeline | rank=0 | run_id=20260212_004513 | seed=47 | stage=train | world_size=4
+2026-02-12 00:45:13 INFO relic.v3.train.20260212_004513.rank0 - device_resolved | requested_device=cuda | resolved_device=cuda:0
+2026-02-12 00:46:17 INFO relic.v3.train.20260212_004513.rank0 - dataloaders_ready | test_batches=8 | test_samples=128 | train_batches=2 | train_samples=128 | valid_batches=8 | valid_samples=128
+2026-02-12 00:46:17 INFO relic.v3.train.20260212_004513.rank0 - model_initialized | model_name=v3 | parameter_count=10197633
+2026-02-12 00:46:20 INFO relic.v3.train.20260212_004513.rank0 - ddp_wrap_complete | find_unused_parameters=True | model_wrapped=True
+2026-02-12 00:46:20 INFO relic.v3.train.20260212_004513.rank0 - stage_boundary_start | stage=train
+2026-02-12 00:46:20 INFO relic.v3.train.20260212_004513.rank0 - stage_start | log_dir=logs/v3/train/20260212_004513 | model_dir=models/v3/train/20260212_004513 | run_id=20260212_004513 | stage=train
+2026-02-12 00:46:20 INFO relic.v3.train.20260212_004513.rank0 - training_config_applied | csv_path=logs/v3/train/20260212_004513/training_step.csv | epochs=3 | heartbeat_every_n_steps=20 | monitor_metric=auprc | save_best_only=True | validation_metrics=auprc,auroc
+2026-02-12 00:46:20 INFO relic.v3.train.20260212_004513.rank0 - epoch_start | epoch=1 | total_epochs=3
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - Epoch 1 step 1/2 | running_train_loss=0.7298 | lr=0.000047
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - Epoch 1 step 2/2 | running_train_loss=0.7230 | lr=0.000035
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - training_csv_row_written | epoch=1 | path=logs/v3/train/20260212_004513/training_step.csv
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - checkpoint_saved_best | epoch=1 | monitor_metric=val_auprc | monitor_value=0.482360 | path=models/v3/train/20260212_004513/best_model.pth
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - epoch_complete | epoch=1 | epoch_seconds=1.138384 | monitor_metric=val_auprc | monitor_value=0.482360 | train_loss=0.722966 | val_loss=0.752409
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - epoch_start | epoch=2 | total_epochs=3
+2026-02-12 00:46:21 INFO relic.v3.train.20260212_004513.rank0 - Epoch 2 step 1/2 | running_train_loss=1.0345 | lr=0.000047
+2026-02-12 00:46:22 INFO relic.v3.train.20260212_004513.rank0 - Epoch 2 step 2/2 | running_train_loss=1.0055 | lr=0.000035
+2026-02-12 00:46:22 INFO relic.v3.train.20260212_004513.rank0 - training_csv_row_written | epoch=2 | path=logs/v3/train/20260212_004513/training_step.csv
+2026-02-12 00:46:22 INFO relic.v3.train.20260212_004513.rank0 - epoch_complete | epoch=2 | epoch_seconds=0.697059 | monitor_metric=val_auprc | monitor_value=0.482360 | train_loss=1.005513 | val_loss=0.752409
+2026-02-12 00:46:22 INFO relic.v3.train.20260212_004513.rank0 - epoch_start | epoch=3 | total_epochs=3
+2026-02-12 00:46:22 INFO relic.v3.train.20260212_004513.rank0 - Epoch 3 step 1/2 | running_train_loss=0.8172 | lr=0.000019
+2026-02-12 00:46:22 INFO relic.v3.train.20260212_004513.rank0 - Epoch 3 step 2/2 | running_train_loss=0.8841 | lr=0.000005
+2026-02-12 00:46:23 INFO relic.v3.train.20260212_004513.rank0 - training_csv_row_written | epoch=3 | path=logs/v3/train/20260212_004513/training_step.csv
+2026-02-12 00:46:23 INFO relic.v3.train.20260212_004513.rank0 - epoch_complete | epoch=3 | epoch_seconds=0.660336 | monitor_metric=val_auprc | monitor_value=0.481438 | train_loss=0.884092 | val_loss=0.693280
+2026-02-12 00:46:23 INFO relic.v3.train.20260212_004513.rank0 - early_stopping_triggered | epoch=3
+2026-02-12 00:46:23 INFO relic.v3.train.20260212_004513.rank0 - stage_complete | best_checkpoint_path=models/v3/train/20260212_004513/best_model.pth | run_id=20260212_004513 | stage=train | training_csv_path=logs/v3/train/20260212_004513/training_step.csv
+2026-02-12 00:46:23 INFO relic.v3.train.20260212_004513.rank0 - stage_boundary_end | checkpoint_path=models/v3/train/20260212_004513/best_model.pth | stage=train
