@@ -71,6 +71,21 @@ class TinyModel(nn.Module):
         }
 
 
+class OHEMProbeModel(nn.Module):
+    """Probe model that records forward batch sizes for OHEM flow tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = nn.Linear(4, 1)
+        self.forward_batch_sizes: list[int] = []
+
+    def forward(self, x: torch.Tensor, label: torch.Tensor) -> dict[str, torch.Tensor]:
+        del label
+        self.forward_batch_sizes.append(int(x.size(0)))
+        logits = self.linear(x).squeeze(-1)
+        return {"logits": logits.unsqueeze(-1)}
+
+
 def test_trainer_runs_single_epoch() -> None:
     model = TinyModel()
     loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)
@@ -151,6 +166,26 @@ def test_ohem_disables_pos_weight_for_selected_batch_loss() -> None:
     )
     expected = per_sample_unweighted[torch.tensor([1, 2])].mean()
     assert torch.isclose(loss, expected, atol=1e-6)
+
+
+def test_ohem_training_uses_two_phase_forward_and_reduced_backward_batch() -> None:
+    model = OHEMProbeModel()
+    loader = DataLoader(TinyDataset(), batch_size=4, shuffle=False, collate_fn=_collate)
+    trainer = Trainer(
+        model=model,
+        device=torch.device("cpu"),
+        optimizer_config=OptimizerConfig(optimizer_type="adamw", lr=1e-2),
+        scheduler_config=SchedulerConfig(scheduler_type="none"),
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+        use_amp=False,
+        total_epochs=1,
+        steps_per_epoch=1,
+        ohem_strategy=OHEMSampleStrategy(target_batch_size=2, cap_protein=4, warmup_epochs=0),
+    )
+
+    trainer.train_one_epoch(loader, epoch_index=0)
+
+    assert model.forward_batch_sizes == [4, 2]
 
 
 def test_training_csv_schema_header_order_regression() -> None:
