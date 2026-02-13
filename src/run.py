@@ -21,8 +21,8 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from src.evaluate import Evaluator
 from src.model import V3
+from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
 from src.train import NoOpStrategy, StagedUnfreezeStrategy, Trainer
-from src.train.base import OptimizerConfig, SchedulerConfig
 from src.utils.config import (
     ConfigDict,
     as_bool,
@@ -50,7 +50,6 @@ from src.utils.logging import (
     prepare_stage_directories,
     setup_stage_logger,
 )
-from src.utils.losses import LossConfig
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 
 ROOT_LOGGER = logging.getLogger(__name__)

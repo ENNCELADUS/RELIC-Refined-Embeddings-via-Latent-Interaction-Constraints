@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Literal
 
 import torch
 from torch import nn
@@ -12,50 +10,9 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, OneCycleLR
 from torch.utils.data import DataLoader
 
-from src.utils.losses import LossConfig, binary_classification_loss
+from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
+from src.utils.losses import binary_classification_loss
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy
-
-
-@dataclass(frozen=True)
-class OptimizerConfig:
-    """Optimizer parameters.
-
-    Attributes:
-        optimizer_type: Optimizer name.
-        lr: Base learning rate.
-        beta1: Beta1 for Adam-like optimizers.
-        beta2: Beta2 for Adam-like optimizers.
-        eps: Numerical stability epsilon.
-        weight_decay: Weight decay coefficient.
-    """
-
-    optimizer_type: str
-    lr: float
-    beta1: float = 0.9
-    beta2: float = 0.999
-    eps: float = 1e-8
-    weight_decay: float = 0.0
-
-
-@dataclass(frozen=True)
-class SchedulerConfig:
-    """Scheduler parameters.
-
-    Attributes:
-        scheduler_type: Scheduler name.
-        max_lr: Max learning rate for schedule.
-        pct_start: OneCycle warmup fraction.
-        div_factor: Initial LR divisor.
-        final_div_factor: Final LR divisor.
-        anneal_strategy: OneCycle annealing strategy.
-    """
-
-    scheduler_type: str
-    max_lr: float = 1e-3
-    pct_start: float = 0.2
-    div_factor: float = 25.0
-    final_div_factor: float = 10000.0
-    anneal_strategy: Literal["cos", "linear"] = "cos"
 
 
 class Trainer:

@@ -2,25 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
 import torch.nn.functional as functional
-
-
-@dataclass(frozen=True)
-class LossConfig:
-    """Configuration for binary classification loss.
-
-    Attributes:
-        loss_type: Supported loss name.
-        pos_weight: Positive-class weighting factor.
-        label_smoothing: Label smoothing ratio in ``[0, 1)``.
-    """
-
-    loss_type: str = "bce_with_logits"
-    pos_weight: float = 1.0
-    label_smoothing: float = 0.0
+from src.train.config import LossConfig
 
 
 def _smoothed_labels(labels: torch.Tensor, smoothing: float) -> torch.Tensor:

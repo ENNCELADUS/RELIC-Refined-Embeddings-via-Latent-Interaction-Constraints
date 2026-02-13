@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import src.run as run_module
 from src.embed import EmbeddingCacheManifest, ensure_embeddings_ready, load_cached_embedding
+from src.train.config import LossConfig as SharedLossConfig
 from src.utils.losses import LossConfig, binary_classification_loss
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy, select_ohem_indices
 
@@ -30,3 +31,8 @@ def test_legacy_losses_and_ohem_imports_contract() -> None:
     assert callable(binary_classification_loss)
     assert OHEMSampleStrategy.__name__ == "OHEMSampleStrategy"
     assert callable(select_ohem_indices)
+
+
+def test_losses_legacy_import_points_to_shared_train_config() -> None:
+    """Lock compatibility alias between legacy losses path and shared config."""
+    assert LossConfig is SharedLossConfig
