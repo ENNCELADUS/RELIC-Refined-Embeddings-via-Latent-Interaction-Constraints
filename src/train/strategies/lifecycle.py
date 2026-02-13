@@ -1,4 +1,4 @@
-"""Training strategy callbacks."""
+"""Training lifecycle strategy callbacks."""
 
 from __future__ import annotations
 

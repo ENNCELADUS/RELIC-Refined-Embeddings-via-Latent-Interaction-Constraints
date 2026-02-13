@@ -11,8 +11,8 @@ from torch.optim.lr_scheduler import LRScheduler, OneCycleLR
 from torch.utils.data import DataLoader
 
 from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
+from src.train.strategies.ohem import OHEMSampleStrategy
 from src.utils.losses import binary_classification_loss
-from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 
 
 class Trainer:

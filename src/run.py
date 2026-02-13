@@ -23,6 +23,7 @@ from src.evaluate import Evaluator
 from src.model import V3
 from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
 from src.train import NoOpStrategy, StagedUnfreezeStrategy, Trainer
+from src.train.strategies import OHEMSampleStrategy
 from src.utils.config import (
     ConfigDict,
     as_bool,
@@ -50,7 +51,6 @@ from src.utils.logging import (
     prepare_stage_directories,
     setup_stage_logger,
 )
-from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 
 ROOT_LOGGER = logging.getLogger(__name__)
 AnnealStrategy = Literal["cos", "linear"]
