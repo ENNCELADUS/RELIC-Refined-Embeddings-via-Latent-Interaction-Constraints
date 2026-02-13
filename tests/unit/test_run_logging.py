@@ -75,3 +75,24 @@ def test_ddp_find_unused_parameters_honors_device_override() -> None:
     device_cfg["find_unused_parameters"] = False
 
     assert run_module._ddp_find_unused_parameters(config) is False
+
+
+def test_metrics_from_config_preserves_case_and_order() -> None:
+    eval_cfg: ConfigDict = {"metrics": ["AUROC", "AUPRC", "accuracy"]}
+
+    metrics = run_module._metrics_from_config(eval_cfg)
+
+    assert metrics == ["AUROC", "AUPRC", "accuracy"]
+
+
+def test_training_validation_metrics_rejects_empty_list() -> None:
+    with pytest.raises(
+        ValueError,
+        match="training_config.logging.validation_metrics must not be empty",
+    ):
+        run_module._training_validation_metrics({"logging": {"validation_metrics": []}})
+
+
+def test_metrics_from_config_rejects_non_sequence() -> None:
+    with pytest.raises(ValueError, match="evaluate.metrics must be a sequence"):
+        run_module._metrics_from_config({"metrics": 123})

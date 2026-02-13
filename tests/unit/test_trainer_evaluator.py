@@ -248,3 +248,38 @@ def test_evaluator_without_prefix_returns_raw_metric_names() -> None:
     assert "f1" in metrics
     assert "auroc" in metrics
     assert "loss" in metrics
+
+
+def test_compute_metrics_characterization_single_class_auc_and_unknown_metric() -> None:
+    evaluator = Evaluator(
+        metrics=["auroc", "auprc", "accuracy", "unknown_metric"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+    )
+    labels = torch.tensor([1, 1, 1, 1], dtype=torch.long)
+    probabilities = torch.tensor([0.9, 0.8, 0.4, 0.2], dtype=torch.float32)
+
+    metrics = evaluator._compute_metrics(labels=labels, probabilities=probabilities)
+
+    assert metrics["auroc"] == 0.0
+    assert metrics["auprc"] == 0.0
+    assert metrics["accuracy"] == 0.5
+    assert "unknown_metric" not in metrics
+
+
+def test_compute_metrics_characterization_binary_metric_values() -> None:
+    evaluator = Evaluator(
+        metrics=["accuracy", "sensitivity", "specificity", "precision", "recall", "f1", "mcc"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+    )
+    labels = torch.tensor([0, 0, 1, 1], dtype=torch.long)
+    probabilities = torch.tensor([0.1, 0.6, 0.9, 0.2], dtype=torch.float32)
+
+    metrics = evaluator._compute_metrics(labels=labels, probabilities=probabilities)
+
+    assert metrics["accuracy"] == pytest.approx(0.5)
+    assert metrics["sensitivity"] == pytest.approx(0.5)
+    assert metrics["specificity"] == pytest.approx(0.5)
+    assert metrics["precision"] == pytest.approx(0.5)
+    assert metrics["recall"] == pytest.approx(0.5)
+    assert metrics["f1"] == pytest.approx(0.5)
+    assert metrics["mcc"] == pytest.approx(0.0)
