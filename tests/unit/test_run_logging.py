@@ -96,3 +96,11 @@ def test_training_validation_metrics_rejects_empty_list() -> None:
 def test_metrics_from_config_rejects_non_sequence() -> None:
     with pytest.raises(ValueError, match="evaluate.metrics must be a sequence"):
         run_module._metrics_from_config({"metrics": 123})
+
+
+def test_training_validation_metrics_lowercases_entries() -> None:
+    training_cfg: ConfigDict = {"logging": {"validation_metrics": ["AUPRC", "AuRoC", "accuracy"]}}
+
+    metrics = run_module._training_validation_metrics(training_cfg)
+
+    assert metrics == ["auprc", "auroc", "accuracy"]

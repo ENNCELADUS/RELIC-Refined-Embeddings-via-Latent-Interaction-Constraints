@@ -70,6 +70,11 @@ EVAL_CSV_COLUMNS = [
     "f1",
     "mcc",
 ]
+STAGES_BY_MODE: dict[str, tuple[str, ...]] = {
+    "train_only": ("train",),
+    "full_pipeline": ("train", "evaluate"),
+    "eval_only": ("evaluate",),
+}
 
 
 def _stage_logger_name(model_name: str, stage: str, run_id: str, rank: int) -> str:
@@ -105,10 +110,12 @@ def _parse_anneal_strategy(value: object) -> AnnealStrategy:
 
 def _metrics_from_config(eval_cfg: ConfigDict) -> list[str]:
     """Extract configured metric names."""
-    metrics = eval_cfg.get("metrics", [])
-    if not isinstance(metrics, Sequence) or isinstance(metrics, (str, bytes)):
-        raise ValueError("evaluate.metrics must be a sequence")
-    return as_str_list(metrics, "evaluate.metrics")
+    return _parse_metric_names(
+        raw_metrics=eval_cfg.get("metrics", []),
+        field_name="evaluate.metrics",
+        lowercase=False,
+        allow_empty=True,
+    )
 
 
 def _build_loss_config(training_cfg: ConfigDict) -> LossConfig:
@@ -128,16 +135,40 @@ def _build_loss_config(training_cfg: ConfigDict) -> LossConfig:
 def _training_validation_metrics(training_cfg: ConfigDict) -> list[str]:
     """Parse metrics to persist in ``training_step.csv``."""
     logging_cfg = _training_logging_config(training_cfg)
-    raw_metrics = logging_cfg.get("validation_metrics", DEFAULT_TRAINING_VAL_METRICS)
+    return _parse_metric_names(
+        raw_metrics=logging_cfg.get("validation_metrics", DEFAULT_TRAINING_VAL_METRICS),
+        field_name="training_config.logging.validation_metrics",
+        lowercase=True,
+        allow_empty=False,
+    )
+
+
+def _parse_metric_names(
+    raw_metrics: object,
+    field_name: str,
+    *,
+    lowercase: bool,
+    allow_empty: bool,
+) -> list[str]:
+    """Parse and validate configured metric names.
+
+    Args:
+        raw_metrics: Candidate metric list from config.
+        field_name: Config path used in validation messages.
+        lowercase: Whether to normalize metric names to lowercase.
+        allow_empty: Whether an empty metric list is permitted.
+
+    Returns:
+        Parsed metric names in original or lowercased form.
+    """
     if not isinstance(raw_metrics, Sequence) or isinstance(raw_metrics, (str, bytes)):
-        raise ValueError("training_config.logging.validation_metrics must be a sequence")
-    metrics = [
-        metric.lower()
-        for metric in as_str_list(raw_metrics, "training_config.logging.validation_metrics")
-    ]
-    if not metrics:
-        raise ValueError("training_config.logging.validation_metrics must not be empty")
-    return metrics
+        raise ValueError(f"{field_name} must be a sequence")
+    metric_names = as_str_list(raw_metrics, field_name)
+    if lowercase:
+        metric_names = [metric_name.lower() for metric_name in metric_names]
+    if not allow_empty and not metric_names:
+        raise ValueError(f"{field_name} must not be empty")
+    return metric_names
 
 
 def _training_heartbeat_every_n_steps(training_cfg: ConfigDict) -> int:
@@ -229,6 +260,42 @@ def _build_stage_runtime(
         enabled=distributed_context.is_main_process,
     )
     return log_dir, model_dir, stage_logger
+
+
+def _selected_stages_for_mode(mode: str) -> tuple[str, ...]:
+    """Return ordered stages for one run mode."""
+    selected_stages = STAGES_BY_MODE.get(mode)
+    if selected_stages is None:
+        raise ValueError(f"Unsupported run mode: {mode}")
+    return selected_stages
+
+
+def _log_event_for_stages(
+    *,
+    stage_names: Sequence[str],
+    stage_loggers: dict[str, logging.Logger],
+    event: str,
+    **details: object,
+) -> None:
+    """Emit one stage event for each selected stage logger."""
+    for stage in stage_names:
+        log_stage_event(stage_loggers[stage], event, **details)
+
+
+def _evaluation_checkpoint_path(
+    *,
+    mode: str,
+    train_checkpoint_path: Path | None,
+    load_checkpoint_path: Path | None,
+) -> Path:
+    """Resolve checkpoint path for evaluation-capable run modes."""
+    if mode == "full_pipeline":
+        if train_checkpoint_path is None:
+            raise RuntimeError("train checkpoint missing for full_pipeline evaluation")
+        return train_checkpoint_path
+    if load_checkpoint_path is None:
+        raise ValueError("load_checkpoint_path is required for eval_only")
+    return load_checkpoint_path
 
 
 def _len_or_unknown(value: object) -> int | str:
@@ -720,14 +787,7 @@ def execute_pipeline(config: ConfigDict) -> None:
             "train": train_run_id,
             "evaluate": eval_run_id,
         }
-        stage_names_for_mode: dict[str, list[str]] = {
-            "train_only": ["train"],
-            "full_pipeline": ["train", "evaluate"],
-            "eval_only": ["evaluate"],
-        }
-        selected_stages = stage_names_for_mode.get(mode)
-        if selected_stages is None:
-            raise ValueError(f"Unsupported run mode: {mode}")
+        selected_stages = _selected_stages_for_mode(mode)
         stage_loggers: dict[str, logging.Logger] = {}
         for stage in selected_stages:
             log_dir, _, stage_logger = _build_stage_runtime(
@@ -752,12 +812,12 @@ def execute_pipeline(config: ConfigDict) -> None:
         if distributed_context.is_distributed and device.type == "cuda":
             device = torch.device("cuda", distributed_context.local_rank)
         if distributed_context.is_main_process:
-            for stage in selected_stages:
-                log_stage_event(
-                    stage_loggers[stage],
-                    "device",
-                    resolved_device=device,
-                )
+            _log_event_for_stages(
+                stage_names=selected_stages,
+                stage_loggers=stage_loggers,
+                event="device",
+                resolved_device=device,
+            )
 
         dataloaders = build_dataloaders(
             config=config,
@@ -766,14 +826,14 @@ def execute_pipeline(config: ConfigDict) -> None:
             world_size=distributed_context.world_size,
         )
         if distributed_context.is_main_process:
-            for stage in selected_stages:
-                log_stage_event(
-                    stage_loggers[stage],
-                    "data_ready",
-                    train=_len_or_unknown(dataloaders["train"].dataset),
-                    valid=_len_or_unknown(dataloaders["valid"].dataset),
-                    test=_len_or_unknown(dataloaders["test"].dataset),
-                )
+            _log_event_for_stages(
+                stage_names=selected_stages,
+                stage_loggers=stage_loggers,
+                event="data_ready",
+                train=_len_or_unknown(dataloaders["train"].dataset),
+                valid=_len_or_unknown(dataloaders["valid"].dataset),
+                test=_len_or_unknown(dataloaders["test"].dataset),
+            )
         model = build_model(config=config).to(device)
         if distributed_context.is_main_process:
             log_stage_event(
@@ -789,17 +849,18 @@ def execute_pipeline(config: ConfigDict) -> None:
                 find_unused_parameters=ddp_find_unused_parameters,
             )
         if distributed_context.is_main_process:
-            for stage in selected_stages:
-                log_stage_event(
-                    stage_loggers[stage],
-                    "ddp_ready",
-                    wrapped=distributed_context.is_distributed,
-                )
+            _log_event_for_stages(
+                stage_names=selected_stages,
+                stage_loggers=stage_loggers,
+                event="ddp_ready",
+                wrapped=distributed_context.is_distributed,
+            )
 
-        if mode == "train_only":
+        train_checkpoint_path: Path | None = None
+        if "train" in selected_stages:
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["train"], "begin_training")
-            run_training_stage(
+            train_checkpoint_path = run_training_stage(
                 stage="train",
                 config=config,
                 model=model,
@@ -810,39 +871,13 @@ def execute_pipeline(config: ConfigDict) -> None:
             )
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["train"], "end_training")
-            return
 
-        if mode == "full_pipeline":
-            if distributed_context.is_main_process:
-                log_stage_event(stage_loggers["train"], "begin_training")
-            train_checkpoint = run_training_stage(
-                stage="train",
-                config=config,
-                model=model,
-                device=device,
-                dataloaders=dataloaders,
-                run_id=train_run_id,
-                distributed_context=distributed_context,
+        if "evaluate" in selected_stages:
+            checkpoint_path = _evaluation_checkpoint_path(
+                mode=mode,
+                train_checkpoint_path=train_checkpoint_path,
+                load_checkpoint_path=load_checkpoint_path,
             )
-            if distributed_context.is_main_process:
-                log_stage_event(stage_loggers["train"], "end_training")
-                log_stage_event(stage_loggers["evaluate"], "begin_evaluation")
-            run_evaluation_stage(
-                config=config,
-                model=model,
-                device=device,
-                dataloaders=dataloaders,
-                run_id=eval_run_id,
-                checkpoint_path=train_checkpoint,
-                distributed_context=distributed_context,
-            )
-            if distributed_context.is_main_process:
-                log_stage_event(stage_loggers["evaluate"], "end_evaluation")
-            return
-
-        if mode == "eval_only":
-            if load_checkpoint_path is None:
-                raise ValueError("load_checkpoint_path is required for eval_only")
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["evaluate"], "begin_evaluation")
             run_evaluation_stage(
@@ -851,14 +886,11 @@ def execute_pipeline(config: ConfigDict) -> None:
                 device=device,
                 dataloaders=dataloaders,
                 run_id=eval_run_id,
-                checkpoint_path=load_checkpoint_path,
+                checkpoint_path=checkpoint_path,
                 distributed_context=distributed_context,
             )
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["evaluate"], "end_evaluation")
-            return
-
-        raise ValueError(f"Unsupported run mode: {mode}")
     finally:
         cleanup_distributed(distributed_context)
 
