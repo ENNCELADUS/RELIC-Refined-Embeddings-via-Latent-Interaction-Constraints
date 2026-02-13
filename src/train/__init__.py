@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any
 
 __all__ = ["NoOpStrategy", "StagedUnfreezeStrategy", "Trainer"]
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> object:
     """Lazily expose training exports to avoid import cycles."""
     if name == "Trainer":
         return import_module("src.train.base").Trainer

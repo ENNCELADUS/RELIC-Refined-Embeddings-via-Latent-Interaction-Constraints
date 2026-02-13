@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 import torch
 
@@ -139,4 +138,3 @@ def _parse_embedding_settings(config: ConfigDict) -> _EmbeddingSettings:
         id_column=id_column,
         sequence_column=sequence_column,
     )
-

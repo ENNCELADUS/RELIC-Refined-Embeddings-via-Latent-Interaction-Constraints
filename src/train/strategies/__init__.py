@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any
 
 __all__ = [
     "NoOpStrategy",
@@ -14,7 +13,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> object:
     """Lazily resolve strategy symbols."""
     if name in {"NoOpStrategy", "StagedUnfreezeStrategy", "TrainingStrategy"}:
         lifecycle_module = import_module("src.train.strategies.lifecycle")

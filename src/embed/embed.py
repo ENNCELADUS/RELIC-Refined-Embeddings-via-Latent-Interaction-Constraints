@@ -6,7 +6,6 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-import torch
 import torch.distributed as dist
 
 from src.embed.cache import (
@@ -40,6 +39,13 @@ from src.embed.io import (
 from src.utils.config import ConfigDict
 
 LOGGER = logging.getLogger(__name__)
+__all__ = [
+    "EmbeddingCacheManifest",
+    "ensure_embeddings_ready",
+    "load_cached_embedding",
+    "_embedding_relative_path",
+    "_generate_missing_embeddings",
+]
 
 
 def _distributed_generation_context(allow_generation: bool) -> tuple[int, int] | None:

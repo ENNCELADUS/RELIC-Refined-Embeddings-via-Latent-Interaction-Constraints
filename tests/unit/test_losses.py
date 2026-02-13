@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import torch
-
 from src.utils.losses import LossConfig, binary_classification_loss
 
 
