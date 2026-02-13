@@ -206,6 +206,84 @@ class Trainer:
         )
         return per_sample[selected_indices].mean()
 
+    def _is_ohem_mining_active(self, epoch_index: int) -> bool:
+        """Return whether staged OHEM mining is active for this epoch."""
+        if self.ohem_strategy is None:
+            return False
+        return epoch_index >= self.ohem_strategy.warmup_epochs
+
+    def _compute_ohem_selected_indices(
+        self,
+        batch: dict[str, torch.Tensor],
+        epoch_index: int,
+    ) -> torch.Tensor:
+        """Run read-only scoring on the candidate pool and select hard examples."""
+        if self.ohem_strategy is None:
+            raise ValueError("OHEM strategy is not configured")
+        mining_loss_config = LossConfig(
+            loss_type=self.loss_config.loss_type,
+            pos_weight=1.0,
+            label_smoothing=0.0,
+        )
+        with (
+            torch.inference_mode(),
+            torch.autocast(
+                device_type=self.device.type,
+                enabled=self.use_amp,
+            ),
+        ):
+            mining_output = self._forward_model(batch)
+            mining_logits = mining_output["logits"]
+            mining_loss = binary_classification_loss(
+                logits=mining_logits,
+                labels=batch["label"].float(),
+                loss_config=mining_loss_config,
+                reduction="none",
+            )
+            selected_indices = self.ohem_strategy.select(
+                losses=mining_loss,
+                epoch_index=epoch_index,
+                protein_a_ids=batch.get("protein_a_id"),
+                protein_b_ids=batch.get("protein_b_id"),
+            )
+        del mining_output
+        del mining_logits
+        del mining_loss
+        return selected_indices
+
+    def _select_batch_rows(
+        self,
+        batch: dict[str, torch.Tensor],
+        selected_indices: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Select rows aligned to the sample axis from a batch dictionary."""
+        selected_batch: dict[str, torch.Tensor] = {}
+        batch_size = int(batch["label"].size(0))
+        for key, value in batch.items():
+            if value.dim() > 0 and int(value.size(0)) == batch_size:
+                selected_batch[key] = value.index_select(0, selected_indices)
+            else:
+                selected_batch[key] = value
+        return selected_batch
+
+    def _ohem_selected_batch_loss(
+        self,
+        output: dict[str, torch.Tensor],
+        batch: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Compute training loss for already-selected OHEM hard examples."""
+        ohem_loss_config = LossConfig(
+            loss_type=self.loss_config.loss_type,
+            pos_weight=1.0,
+            label_smoothing=self.loss_config.label_smoothing,
+        )
+        return binary_classification_loss(
+            logits=output["logits"],
+            labels=batch["label"].float(),
+            loss_config=ohem_loss_config,
+            reduction="mean",
+        )
+
     def train_one_epoch(
         self,
         train_loader: DataLoader[dict[str, torch.Tensor]],
@@ -229,14 +307,28 @@ class Trainer:
             batch_count += 1
             prepared_batch = self._move_batch_to_device(batch)
             self.optimizer.zero_grad(set_to_none=True)
-
-            with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
-                output = self._forward_model(prepared_batch)
-                loss = self._select_loss(
-                    output=output,
+            if self._is_ohem_mining_active(epoch_index):
+                selected_indices = self._compute_ohem_selected_indices(
                     batch=prepared_batch,
                     epoch_index=epoch_index,
                 )
+                selected_batch = self._select_batch_rows(
+                    batch=prepared_batch,
+                    selected_indices=selected_indices,
+                )
+                del prepared_batch
+                del selected_indices
+                with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
+                    output = self._forward_model(selected_batch)
+                    loss = self._ohem_selected_batch_loss(output=output, batch=selected_batch)
+            else:
+                with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
+                    output = self._forward_model(prepared_batch)
+                    loss = self._select_loss(
+                        output=output,
+                        batch=prepared_batch,
+                        epoch_index=epoch_index,
+                    )
 
             if self.use_amp:
                 scaled_loss = self.scaler.scale(loss)
