@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 from sklearn.metrics import (
@@ -90,6 +91,59 @@ class Evaluator:
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
         return sensitivity, specificity
 
+    @staticmethod
+    def _score_auc_metric(
+        has_both_classes: bool,
+        score_fn: Callable[[], float],
+    ) -> float:
+        """Return AUC-like score when both classes are present, else ``0.0``."""
+        if not has_both_classes:
+            return 0.0
+        return _safe_float(score_fn())
+
+    def _metric_scorers(
+        self,
+        labels: torch.Tensor,
+        probabilities: torch.Tensor,
+        predictions: torch.Tensor,
+        has_both_classes: bool,
+    ) -> dict[str, Callable[[], float]]:
+        """Build score functions keyed by metric name."""
+        label_array = labels.cpu().numpy()
+        prob_array = probabilities.cpu().numpy()
+        pred_array = predictions.cpu().numpy()
+        needs_binary_stats = "sensitivity" in self.metrics or "specificity" in self.metrics
+        sensitivity = 0.0
+        specificity = 0.0
+        if needs_binary_stats:
+            sensitivity, specificity = self._binary_stats(labels=labels, predictions=predictions)
+
+        def score_auroc() -> float:
+            return self._score_auc_metric(
+                has_both_classes=has_both_classes,
+                score_fn=lambda: roc_auc_score(label_array, prob_array),
+            )
+
+        def score_auprc() -> float:
+            return self._score_auc_metric(
+                has_both_classes=has_both_classes,
+                score_fn=lambda: average_precision_score(label_array, prob_array),
+            )
+
+        return {
+            "auroc": score_auroc,
+            "auprc": score_auprc,
+            "accuracy": lambda: _safe_float(accuracy_score(label_array, pred_array)),
+            "sensitivity": lambda: _safe_float(sensitivity),
+            "specificity": lambda: _safe_float(specificity),
+            "precision": lambda: _safe_float(
+                precision_score(label_array, pred_array, zero_division=0)
+            ),
+            "recall": lambda: _safe_float(recall_score(label_array, pred_array, zero_division=0)),
+            "f1": lambda: _safe_float(f1_score(label_array, pred_array, zero_division=0)),
+            "mcc": lambda: _safe_float(matthews_corrcoef(label_array, pred_array)),
+        }
+
     def _compute_metrics(
         self,
         labels: torch.Tensor,
@@ -107,41 +161,17 @@ class Evaluator:
         results: dict[str, float] = {}
         has_both_classes = torch.unique(labels).numel() > 1
         predictions = (probabilities >= 0.5).long()
-        label_array = labels.cpu().numpy()
-        prob_array = probabilities.cpu().numpy()
-        pred_array = predictions.cpu().numpy()
-
+        scorers = self._metric_scorers(
+            labels=labels,
+            probabilities=probabilities,
+            predictions=predictions,
+            has_both_classes=has_both_classes,
+        )
         for metric in self.metrics:
-            if metric == "auroc":
-                if not has_both_classes:
-                    results[metric] = 0.0
-                else:
-                    results[metric] = _safe_float(roc_auc_score(label_array, prob_array))
-            elif metric == "auprc":
-                if not has_both_classes:
-                    results[metric] = 0.0
-                else:
-                    results[metric] = _safe_float(average_precision_score(label_array, prob_array))
-            elif metric == "accuracy":
-                results[metric] = _safe_float(accuracy_score(label_array, pred_array))
-            elif metric == "sensitivity":
-                sensitivity, _ = self._binary_stats(labels=labels, predictions=predictions)
-                results[metric] = _safe_float(sensitivity)
-            elif metric == "specificity":
-                _, specificity = self._binary_stats(labels=labels, predictions=predictions)
-                results[metric] = _safe_float(specificity)
-            elif metric == "precision":
-                results[metric] = _safe_float(
-                    precision_score(label_array, pred_array, zero_division=0)
-                )
-            elif metric == "recall":
-                results[metric] = _safe_float(
-                    recall_score(label_array, pred_array, zero_division=0)
-                )
-            elif metric == "f1":
-                results[metric] = _safe_float(f1_score(label_array, pred_array, zero_division=0))
-            elif metric == "mcc":
-                results[metric] = _safe_float(matthews_corrcoef(label_array, pred_array))
+            score_fn = scorers.get(metric)
+            if score_fn is None:
+                continue
+            results[metric] = score_fn()
         return results
 
     def evaluate(
