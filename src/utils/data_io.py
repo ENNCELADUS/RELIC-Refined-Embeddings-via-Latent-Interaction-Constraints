@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -279,7 +280,7 @@ def build_dataloaders(
     distributed: bool = False,
     rank: int = 0,
     world_size: int = 1,
-) -> dict[str, DataLoader[dict[str, torch.Tensor]]]:
+) -> dict[str, DataLoader[dict[str, object]]]:
     """Build train/valid/test loaders from the global config.
 
     Args:
@@ -298,6 +299,17 @@ def build_dataloaders(
     run_cfg = get_section(config, "run_config")
     data_cfg = get_section(config, "data_config")
     model_cfg = get_section(config, "model_config")
+    model_name = as_str(model_cfg.get("model", ""), "model_config.model").lower()
+    if model_name == "v6":
+        from src.utils.data_io_v6 import build_dataloaders_v6
+
+        return build_dataloaders_v6(
+            config=config,
+            distributed=distributed,
+            rank=rank,
+            world_size=world_size,
+        )
+
     benchmark_cfg = get_section(data_cfg, "benchmark")
     dataloader_cfg = get_section(data_cfg, "dataloader")
 
@@ -342,40 +354,49 @@ def build_dataloaders(
         )
 
     return {
-        "train": _build_split_loader(
-            split_path=train_path,
-            config=config,
-            embedding_cache=embedding_cache,
-            input_dim=input_dim,
-            max_sequence_length=max_sequence_length,
-            seed=seed,
-            shuffle=True,
-            distributed=distributed,
-            rank=rank,
-            world_size=world_size,
+        "train": cast(
+            DataLoader[dict[str, object]],
+            _build_split_loader(
+                split_path=train_path,
+                config=config,
+                embedding_cache=embedding_cache,
+                input_dim=input_dim,
+                max_sequence_length=max_sequence_length,
+                seed=seed,
+                shuffle=True,
+                distributed=distributed,
+                rank=rank,
+                world_size=world_size,
+            ),
         ),
-        "valid": _build_split_loader(
-            split_path=valid_path,
-            config=config,
-            embedding_cache=embedding_cache,
-            input_dim=input_dim,
-            max_sequence_length=max_sequence_length,
-            seed=seed + 1,
-            shuffle=False,
-            distributed=False,
-            rank=rank,
-            world_size=world_size,
+        "valid": cast(
+            DataLoader[dict[str, object]],
+            _build_split_loader(
+                split_path=valid_path,
+                config=config,
+                embedding_cache=embedding_cache,
+                input_dim=input_dim,
+                max_sequence_length=max_sequence_length,
+                seed=seed + 1,
+                shuffle=False,
+                distributed=False,
+                rank=rank,
+                world_size=world_size,
+            ),
         ),
-        "test": _build_split_loader(
-            split_path=test_path,
-            config=config,
-            embedding_cache=embedding_cache,
-            input_dim=input_dim,
-            max_sequence_length=max_sequence_length,
-            seed=seed + 2,
-            shuffle=False,
-            distributed=False,
-            rank=rank,
-            world_size=world_size,
+        "test": cast(
+            DataLoader[dict[str, object]],
+            _build_split_loader(
+                split_path=test_path,
+                config=config,
+                embedding_cache=embedding_cache,
+                input_dim=input_dim,
+                max_sequence_length=max_sequence_length,
+                seed=seed + 2,
+                shuffle=False,
+                distributed=False,
+                rank=rank,
+                world_size=world_size,
+            ),
         ),
     }

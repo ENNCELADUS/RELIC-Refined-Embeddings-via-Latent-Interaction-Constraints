@@ -23,7 +23,7 @@ from src.utils.distributed import (
 )
 from src.utils.logging import generate_run_id, log_stage_event
 
-DataLoaderMap = dict[str, torch.utils.data.DataLoader[dict[str, torch.Tensor]]]
+DataLoaderMap = dict[str, torch.utils.data.DataLoader[dict[str, object]]]
 
 STAGES_BY_MODE: dict[str, tuple[str, ...]] = {
     "train_only": ("train",),
@@ -112,7 +112,7 @@ def execute_pipeline(
     seed = as_int(run_cfg.get("seed", 0), "run_config.seed")
     set_global_seed(seed=seed)
     distributed_context = initialize_distributed_fn(
-        ddp_enabled=as_bool(device_cfg.get("ddp_enabled", False), "device_config.ddp_enabled")
+        as_bool(device_cfg.get("ddp_enabled", False), "device_config.ddp_enabled")
     )
     ddp_find_unused_parameters = _ddp_find_unused_parameters(config)
     try:
@@ -177,7 +177,7 @@ def execute_pipeline(
                 valid=_len_or_unknown(dataloaders["valid"].dataset),
                 test=_len_or_unknown(dataloaders["test"].dataset),
             )
-        model = build_model_fn(config=config).to(device)
+        model = build_model_fn(config).to(device)
         if distributed_context.is_main_process:
             log_stage_event(
                 stage_loggers[selected_stages[0]],

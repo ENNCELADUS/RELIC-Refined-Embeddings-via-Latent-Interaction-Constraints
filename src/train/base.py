@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 import torch
 from torch import nn
@@ -13,6 +14,9 @@ from torch.utils.data import DataLoader
 from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
 from src.train.strategies.ohem import OHEMSampleStrategy
 from src.utils.losses import binary_classification_loss
+
+BatchValue = torch.Tensor | list[object] | tuple[object, ...] | object
+BatchDict = dict[str, BatchValue]
 
 
 class Trainer:
@@ -99,10 +103,35 @@ class Trainer:
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
 
-    def _move_batch_to_device(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        return {key: value.to(self.device) for key, value in batch.items()}
+    @staticmethod
+    def _required_batch_tensor(
+        batch: BatchDict,
+        key: str,
+    ) -> torch.Tensor:
+        """Return required tensor batch value."""
+        value = batch.get(key)
+        if value is None:
+            raise KeyError(f"Batch is missing required tensor field '{key}'")
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"Batch field '{key}' must be a torch.Tensor")
+        return value
 
-    def _forward_model(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    @staticmethod
+    def _optional_tensor(value: BatchValue) -> torch.Tensor | None:
+        """Return tensor value or ``None`` when value is not tensor-like."""
+        return value if isinstance(value, torch.Tensor) else None
+
+    def _move_batch_to_device(self, batch: BatchDict) -> BatchDict:
+        """Move tensor fields to target device while preserving non-tensor fields."""
+        moved_batch: BatchDict = {}
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                moved_batch[key] = value.to(self.device)
+            else:
+                moved_batch[key] = value
+        return moved_batch
+
+    def _forward_model(self, batch: BatchDict) -> dict[str, torch.Tensor]:
         try:
             output = self.model(**batch)
         except TypeError:
@@ -114,11 +143,11 @@ class Trainer:
     def _select_loss(
         self,
         output: dict[str, torch.Tensor],
-        batch: dict[str, torch.Tensor],
+        batch: BatchDict,
         epoch_index: int,
     ) -> torch.Tensor:
         logits = output["logits"]
-        labels = batch["label"].float()
+        labels = self._required_batch_tensor(batch, "label").float()
         loss = binary_classification_loss(
             logits=logits,
             labels=labels,
@@ -146,8 +175,8 @@ class Trainer:
             selected_indices = self.ohem_strategy.select(
                 losses=mining_loss,
                 epoch_index=epoch_index,
-                protein_a_ids=batch.get("protein_a_id"),
-                protein_b_ids=batch.get("protein_b_id"),
+                protein_a_ids=self._optional_tensor(batch.get("protein_a_id")),
+                protein_b_ids=self._optional_tensor(batch.get("protein_b_id")),
             )
 
         ohem_loss_config = LossConfig(
@@ -171,7 +200,7 @@ class Trainer:
 
     def _compute_ohem_selected_indices(
         self,
-        batch: dict[str, torch.Tensor],
+        batch: BatchDict,
         epoch_index: int,
     ) -> torch.Tensor:
         """Run read-only scoring on the candidate pool and select hard examples."""
@@ -193,15 +222,15 @@ class Trainer:
             mining_logits = mining_output["logits"]
             mining_loss = binary_classification_loss(
                 logits=mining_logits,
-                labels=batch["label"].float(),
+                labels=self._required_batch_tensor(batch, "label").float(),
                 loss_config=mining_loss_config,
                 reduction="none",
             )
             selected_indices = self.ohem_strategy.select(
                 losses=mining_loss,
                 epoch_index=epoch_index,
-                protein_a_ids=batch.get("protein_a_id"),
-                protein_b_ids=batch.get("protein_b_id"),
+                protein_a_ids=self._optional_tensor(batch.get("protein_a_id")),
+                protein_b_ids=self._optional_tensor(batch.get("protein_b_id")),
             )
         del mining_output
         del mining_logits
@@ -210,15 +239,27 @@ class Trainer:
 
     def _select_batch_rows(
         self,
-        batch: dict[str, torch.Tensor],
+        batch: BatchDict,
         selected_indices: torch.Tensor,
-    ) -> dict[str, torch.Tensor]:
+    ) -> BatchDict:
         """Select rows aligned to the sample axis from a batch dictionary."""
-        selected_batch: dict[str, torch.Tensor] = {}
-        batch_size = int(batch["label"].size(0))
+        selected_batch: BatchDict = {}
+        label = self._required_batch_tensor(batch, "label")
+        batch_size = int(label.size(0))
+        selected_indices_list = selected_indices.detach().cpu().tolist()
         for key, value in batch.items():
-            if value.dim() > 0 and int(value.size(0)) == batch_size:
-                selected_batch[key] = value.index_select(0, selected_indices)
+            is_row_tensor = (
+                isinstance(value, torch.Tensor)
+                and value.dim() > 0
+                and int(value.size(0)) == batch_size
+            )
+            if is_row_tensor:
+                tensor_value = cast(torch.Tensor, value)
+                selected_batch[key] = tensor_value.index_select(0, selected_indices)
+            elif isinstance(value, list) and len(value) == batch_size:
+                selected_batch[key] = [value[index] for index in selected_indices_list]
+            elif isinstance(value, tuple) and len(value) == batch_size:
+                selected_batch[key] = tuple(value[index] for index in selected_indices_list)
             else:
                 selected_batch[key] = value
         return selected_batch
@@ -226,7 +267,7 @@ class Trainer:
     def _ohem_selected_batch_loss(
         self,
         output: dict[str, torch.Tensor],
-        batch: dict[str, torch.Tensor],
+        batch: BatchDict,
     ) -> torch.Tensor:
         """Compute training loss for already-selected OHEM hard examples."""
         ohem_loss_config = LossConfig(
@@ -236,14 +277,14 @@ class Trainer:
         )
         return binary_classification_loss(
             logits=output["logits"],
-            labels=batch["label"].float(),
+            labels=self._required_batch_tensor(batch, "label").float(),
             loss_config=ohem_loss_config,
             reduction="mean",
         )
 
     def train_one_epoch(
         self,
-        train_loader: DataLoader[dict[str, torch.Tensor]],
+        train_loader: DataLoader[BatchDict],
         epoch_index: int = 0,
     ) -> dict[str, float]:
         """Run one full training epoch.

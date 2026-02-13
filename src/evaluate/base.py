@@ -19,7 +19,11 @@ from sklearn.metrics import (
 from torch import nn
 from torch.utils.data import DataLoader
 
-from src.utils.losses import LossConfig, binary_classification_loss
+from src.train.config import LossConfig
+from src.utils.losses import binary_classification_loss
+
+BatchValue = torch.Tensor | list[object] | tuple[object, ...] | object
+BatchDict = dict[str, BatchValue]
 
 
 def _safe_float(value: float) -> float:
@@ -49,7 +53,26 @@ class Evaluator:
         self.loss_config = loss_config
 
     @staticmethod
-    def _forward_model(model: nn.Module, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def _batch_tensor(batch: BatchDict, key: str) -> torch.Tensor:
+        """Return required tensor field from a batch dictionary."""
+        value = batch.get(key)
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"Batch field '{key}' must be a torch.Tensor")
+        return value
+
+    @staticmethod
+    def _move_batch_to_device(batch: BatchDict, device: torch.device) -> BatchDict:
+        """Move tensor fields to target device while preserving non-tensor fields."""
+        prepared_batch: BatchDict = {}
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                prepared_batch[key] = value.to(device)
+            else:
+                prepared_batch[key] = value
+        return prepared_batch
+
+    @staticmethod
+    def _forward_model(model: nn.Module, batch: BatchDict) -> dict[str, torch.Tensor]:
         """Execute model forward and validate output contract.
 
         Args:
@@ -177,7 +200,7 @@ class Evaluator:
     def evaluate(
         self,
         model: nn.Module,
-        data_loader: DataLoader[dict[str, torch.Tensor]],
+        data_loader: DataLoader[BatchDict],
         device: torch.device,
         prefix: str | None = "val",
     ) -> dict[str, float]:
@@ -201,10 +224,10 @@ class Evaluator:
 
         for batch in data_loader:
             batch_count += 1
-            prepared_batch = {key: value.to(device) for key, value in batch.items()}
+            prepared_batch = self._move_batch_to_device(batch=batch, device=device)
             output = self._forward_model(model=model, batch=prepared_batch)
             logits = output["logits"]
-            labels = prepared_batch["label"].float()
+            labels = self._batch_tensor(prepared_batch, "label").float()
             loss = binary_classification_loss(
                 logits=logits,
                 labels=labels,

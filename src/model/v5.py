@@ -1,5 +1,4 @@
-"""
-V5 PPI Classifier - Contact Map Modeling Ablation
+"""V5 PPI classifier with contact-map interaction modeling.
 
 This model tests contact map-based interaction modeling:
 1. SiameseEncoder: Linear projection + norm (no transformer layers, same as V2)
@@ -11,17 +10,16 @@ This model tests contact map-based interaction modeling:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import cast
 
 import torch
 import torch.nn as nn
 
-from src.model.v3 import MLPHead, SiameseEncoder, _build_padding_mask
+from src.model.v3 import MLPHead, SiameseEncoder, _build_padding_mask, _to_int
 
 
 class BidirectionalCrossAttentionLayer(nn.Module):
-    """
-    Single layer of bidirectional cross-attention between two protein sequences.
+    """Single layer of bidirectional cross-attention between two protein sequences.
 
     Pre-LN architecture with residual connections and FFN:
     - A attends to B, updates H_A (shared weights)
@@ -55,25 +53,24 @@ class BidirectionalCrossAttentionLayer(nn.Module):
         self,
         query: torch.Tensor,
         key_value: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor],
+        key_padding_mask: torch.Tensor | None,
     ) -> torch.Tensor:
         query_norm = self.norm_attn(query)
-        attn_out, _ = self.attn(
-            query_norm, key_value, key_value, key_padding_mask=key_padding_mask
-        )
-        return query + self.drop_attn(attn_out)
+        attn_out, _ = self.attn(query_norm, key_value, key_value, key_padding_mask=key_padding_mask)
+        return query + cast(torch.Tensor, self.drop_attn(attn_out))
 
     def _ffn(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.drop_ffn(self.ffn(self.norm_ffn(x)))
+        return x + cast(torch.Tensor, self.drop_ffn(self.ffn(self.norm_ffn(x))))
 
     def forward(
         self,
         h_a: torch.Tensor,
         h_b: torch.Tensor,
-        mask_a: Optional[torch.Tensor],
-        mask_b: Optional[torch.Tensor],
+        mask_a: torch.Tensor | None,
+        mask_b: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
+        """Apply one bidirectional cross-attention block.
+
         Args:
             h_a: [B, L_A, D_h] - Protein A representations
             h_b: [B, L_B, D_h] - Protein B representations
@@ -81,7 +78,7 @@ class BidirectionalCrossAttentionLayer(nn.Module):
             mask_b: [B, L_B] - Padding mask for B (True = padded)
 
         Returns:
-            Updated (h_a, h_b) with same shapes
+            Updated (h_a, h_b) with same shapes.
         """
         h_a = self._attend(h_a, h_b, mask_b)
         h_a = self._ffn(h_a)
@@ -93,21 +90,16 @@ class BidirectionalCrossAttentionLayer(nn.Module):
 
 
 class BidirectionalCrossAttention(nn.Module):
-    """
-    Stack of bidirectional cross-attention layers.
+    """Stack of bidirectional cross-attention layers.
 
     Unlike V2/V3's InteractionCrossAttention, this does NOT use a CLS token.
     It only updates the residue representations H_A and H_B.
     """
 
-    def __init__(
-        self, d_model: int, n_heads: int, n_layers: int, dropout: float
-    ) -> None:
+    def __init__(self, d_model: int, n_heads: int, n_layers: int, dropout: float) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
-            BidirectionalCrossAttentionLayer(
-                d_model=d_model, n_heads=n_heads, dropout=dropout
-            )
+            BidirectionalCrossAttentionLayer(d_model=d_model, n_heads=n_heads, dropout=dropout)
             for _ in range(n_layers)
         )
 
@@ -118,7 +110,8 @@ class BidirectionalCrossAttention(nn.Module):
         lengths_a: torch.Tensor,
         lengths_b: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
+        """Run stacked bidirectional cross-attention.
+
         Args:
             h_a: [B, L_A, D_h]
             h_b: [B, L_B, D_h]
@@ -126,7 +119,7 @@ class BidirectionalCrossAttention(nn.Module):
             lengths_b: [B] - Actual lengths of sequences in B
 
         Returns:
-            (h_a, h_b) with updated representations
+            (h_a, h_b) with updated representations.
         """
         if h_a.dim() != 3 or h_b.dim() != 3:
             raise ValueError(
@@ -147,8 +140,7 @@ class BidirectionalCrossAttention(nn.Module):
 
 
 class InteractionMapBuilder(nn.Module):
-    """
-    Builds 2D interaction map from residue representations.
+    """Builds 2D interaction map from residue representations.
 
     Steps:
     1. Project H_A, H_B from D_h to D_p (pair dimension)
@@ -171,18 +163,17 @@ class InteractionMapBuilder(nn.Module):
         self.similarity = str(similarity).lower()
         self.eps = float(eps)
         if self.similarity not in {"none", "cosine", "dot"}:
-            raise ValueError(
-                "interaction_map.similarity must be one of: 'none', 'cosine', 'dot'"
-            )
+            raise ValueError("interaction_map.similarity must be one of: 'none', 'cosine', 'dot'")
 
     def forward(
         self,
         h_a: torch.Tensor,
         h_b: torch.Tensor,
-        mask_a: Optional[torch.Tensor] = None,
-        mask_b: Optional[torch.Tensor] = None,
+        mask_a: torch.Tensor | None = None,
+        mask_b: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """
+        """Build channel-first interaction maps.
+
         Args:
             h_a: [B, L_A, D_h]
             h_b: [B, L_B, D_h]
@@ -190,7 +181,7 @@ class InteractionMapBuilder(nn.Module):
             mask_b: Optional padding mask for B
 
         Returns:
-            M_in: [B, C, L_A, L_B] - Channel-first format for CNN
+            M_in: [B, C, L_A, L_B] - Channel-first format for CNN.
         """
         # Project to pair dimension: [B, L, D_h] -> [B, L, D_p]
         z_a = self.activation(self.proj_a(h_a))  # [B, L_A, D_p]
@@ -213,20 +204,12 @@ class InteractionMapBuilder(nn.Module):
 
         if self.similarity != "none":
             if self.similarity == "cosine":
-                norm_a = torch.sqrt(
-                    torch.sum(z_a_exp * z_a_exp, dim=-1, keepdim=True) + self.eps
-                )
-                norm_b = torch.sqrt(
-                    torch.sum(z_b_exp * z_b_exp, dim=-1, keepdim=True) + self.eps
-                )
-                sim = torch.sum(z_a_exp * z_b_exp, dim=-1, keepdim=True) / (
-                    norm_a * norm_b
-                )
+                norm_a = torch.sqrt(torch.sum(z_a_exp * z_a_exp, dim=-1, keepdim=True) + self.eps)
+                norm_b = torch.sqrt(torch.sum(z_b_exp * z_b_exp, dim=-1, keepdim=True) + self.eps)
+                sim = torch.sum(z_a_exp * z_b_exp, dim=-1, keepdim=True) / (norm_a * norm_b)
             else:
                 scale = float(z_a_exp.size(-1)) ** 0.5
-                sim = torch.sum(z_a_exp * z_b_exp, dim=-1, keepdim=True) / (
-                    scale + self.eps
-                )
+                sim = torch.sum(z_a_exp * z_b_exp, dim=-1, keepdim=True) / (scale + self.eps)
             features.append(sim)
 
         # Concatenate along feature dimension
@@ -239,8 +222,7 @@ class InteractionMapBuilder(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    """
-    Standard ResNet-style residual block with two 3x3 convolutions.
+    """Standard ResNet-style residual block with two 3x3 convolutions.
 
     Path A (main): Conv3x3 -> BN -> ReLU -> Conv3x3 -> BN
     Path B (skip): Identity
@@ -256,6 +238,7 @@ class ResidualBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply one residual CNN block."""
         identity = x
 
         out = self.conv1(x)
@@ -268,12 +251,11 @@ class ResidualBlock(nn.Module):
         out = out + identity
         out = self.relu(out)
 
-        return out
+        return cast(torch.Tensor, out)
 
 
 class ContactMapCNN(nn.Module):
-    """
-    ResNet-style CNN for contact map feature extraction.
+    """ResNet-style CNN for contact map feature extraction.
 
     Architecture:
     1. Feature Fusion: 1x1 Conv (C -> D_c) + BN + ReLU
@@ -281,13 +263,20 @@ class ContactMapCNN(nn.Module):
     3. Output kept at D_c channels for downstream pooling
     """
 
-    def __init__(self, in_channels: int, cnn_dim: int, num_blocks: int, dropout: float):
-        """
+    def __init__(
+        self,
+        in_channels: int,
+        cnn_dim: int,
+        num_blocks: int,
+        dropout: float,
+    ) -> None:
+        """Initialize the contact-map CNN stack.
+
         Args:
-            in_channels: Input channels (C)
-            cnn_dim: CNN channel dimension (D_c)
-            num_blocks: Number of residual blocks
-            dropout: Dropout rate after each residual block
+            in_channels: Input channels (C).
+            cnn_dim: CNN channel dimension (D_c).
+            num_blocks: Number of residual blocks.
+            dropout: Dropout rate after each residual block.
         """
         super().__init__()
 
@@ -300,18 +289,17 @@ class ContactMapCNN(nn.Module):
 
         if num_blocks <= 0:
             raise ValueError("cnn_blocks must be >= 1")
-        self.res_blocks = nn.ModuleList(
-            [ResidualBlock(cnn_dim) for _ in range(int(num_blocks))]
-        )
+        self.res_blocks = nn.ModuleList([ResidualBlock(cnn_dim) for _ in range(int(num_blocks))])
         self.drop = nn.Dropout2d(float(dropout)) if dropout > 0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
+        """Compute CNN feature maps over the interaction map.
+
         Args:
             x: [B, 2*D_p, L_A, L_B]
 
         Returns:
-            F_res: [B, D_c, L_A, L_B]
+            F_res: [B, D_c, L_A, L_B].
         """
         x = self.fusion(x)
         for block in self.res_blocks:
@@ -321,8 +309,7 @@ class ContactMapCNN(nn.Module):
 
 
 class V5(nn.Module):
-    """
-    V5 PPI Classifier - Contact Map Modeling Ablation.
+    """V5 PPI Classifier - Contact Map Modeling Ablation.
 
     Architecture:
     1. Siamese encoder: Linear projection + transformer + dropout
@@ -334,7 +321,7 @@ class V5(nn.Module):
 
     name: str = "v5"
 
-    def __init__(self, **model_config: Any) -> None:
+    def __init__(self, **model_config: object) -> None:
         super().__init__()
         required_fields = [
             "input_dim",
@@ -349,31 +336,34 @@ class V5(nn.Module):
         if missing:
             raise ValueError(f"Missing required model configuration fields: {missing}")
 
-        self.input_dim: int = int(model_config["input_dim"])
-        self.d_model: int = int(model_config["d_model"])
-        self.encoder_layers: int = int(model_config["encoder_layers"])
-        self.cross_attn_layers: int = int(model_config["cross_attn_layers"])
-        self.n_heads: int = int(model_config["n_heads"])
-        self.pair_dim: int = int(model_config["pair_dim"])
-        self.cnn_dim: int = int(model_config["cnn_dim"])
+        self.input_dim = _to_int(model_config["input_dim"], "model_config.input_dim")
+        self.d_model = _to_int(model_config["d_model"], "model_config.d_model")
+        self.encoder_layers = _to_int(model_config["encoder_layers"], "model_config.encoder_layers")
+        self.cross_attn_layers = _to_int(
+            model_config["cross_attn_layers"],
+            "model_config.cross_attn_layers",
+        )
+        self.n_heads = _to_int(model_config["n_heads"], "model_config.n_heads")
+        self.pair_dim = _to_int(model_config["pair_dim"], "model_config.pair_dim")
+        self.cnn_dim = _to_int(model_config["cnn_dim"], "model_config.cnn_dim")
 
         # MLP head config
-        mlp_cfg: Dict[str, Any] = model_config.get("mlp_head", {})
-        if not mlp_cfg:
+        mlp_cfg_raw = model_config.get("mlp_head", {})
+        if not isinstance(mlp_cfg_raw, dict) or not mlp_cfg_raw:
             raise ValueError("mlp_head configuration is required for V5")
+        mlp_cfg = mlp_cfg_raw
         if "hidden_dims" not in mlp_cfg or "dropout" not in mlp_cfg:
-            raise ValueError(
-                "mlp_head.hidden_dims and mlp_head.dropout must be provided"
-            )
+            raise ValueError("mlp_head.hidden_dims and mlp_head.dropout must be provided")
         self.mlp_hidden_dims = list(mlp_cfg["hidden_dims"])
         self.mlp_dropout = float(mlp_cfg["dropout"])
         self.mlp_activation = mlp_cfg.get("activation", "gelu")
         self.mlp_norm = mlp_cfg.get("norm", "layernorm")
 
         # Regularization config
-        reg_cfg: Dict[str, Any] = model_config.get("regularization", {})
-        if "dropout" not in reg_cfg:
+        reg_cfg_raw = model_config.get("regularization", {})
+        if not isinstance(reg_cfg_raw, dict) or "dropout" not in reg_cfg_raw:
             raise ValueError("regularization.dropout must be provided for V5")
+        reg_cfg = reg_cfg_raw
         self.encoder_dropout = float(reg_cfg["dropout"])
         self.cross_attention_dropout = float(
             reg_cfg.get("cross_attention_dropout", self.encoder_dropout)
@@ -382,16 +372,20 @@ class V5(nn.Module):
         self.stochastic_depth = float(reg_cfg.get("stochastic_depth", 0.0))
         self.cnn_dropout = float(reg_cfg.get("cnn_dropout", 0.0))
 
-        map_cfg: Dict[str, Any] = model_config.get("interaction_map", {})
-        self.map_include_pair_features = bool(
-            map_cfg.get("include_pair_features", True)
-        )
+        map_cfg_raw = model_config.get("interaction_map", {})
+        if not isinstance(map_cfg_raw, dict):
+            raise ValueError("interaction_map must be a mapping")
+        map_cfg = map_cfg_raw
+        self.map_include_pair_features = bool(map_cfg.get("include_pair_features", True))
         self.map_similarity = str(map_cfg.get("similarity", "cosine")).lower()
         self.map_eps = float(map_cfg.get("eps", 1.0e-8))
 
-        cnn_blocks = int(model_config.get("cnn_blocks", 2))
+        cnn_blocks = _to_int(model_config.get("cnn_blocks", 2), "model_config.cnn_blocks")
 
-        pool_cfg: Dict[str, Any] = model_config.get("pooling", {})
+        pool_cfg_raw = model_config.get("pooling", {})
+        if not isinstance(pool_cfg_raw, dict):
+            raise ValueError("pooling must be a mapping")
+        pool_cfg = pool_cfg_raw
         self.pooling = str(pool_cfg.get("mode", "max_mean")).lower()
         if self.pooling not in {"max", "mean", "max_mean"}:
             raise ValueError("pooling.mode must be one of: 'max', 'mean', 'max_mean'")
@@ -454,6 +448,7 @@ class V5(nn.Module):
         batch: dict[str, torch.Tensor] | None = None,
         **kwargs: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
+        """Run model forward pass for embedding-backed pair inputs."""
         merged_batch: dict[str, torch.Tensor] = {}
         if batch is not None:
             merged_batch.update(batch)
@@ -465,9 +460,7 @@ class V5(nn.Module):
         emb_a = merged_batch["emb_a"]
         emb_b = merged_batch["emb_b"]
         if emb_a.dim() != 3 or emb_b.dim() != 3:
-            raise ValueError(
-                "Input embeddings must be shaped (batch, seq_len, embedding_dim)"
-            )
+            raise ValueError("Input embeddings must be shaped (batch, seq_len, embedding_dim)")
         if emb_a.size(2) != self.input_dim or emb_b.size(2) != self.input_dim:
             raise ValueError("Input embedding dimension must match model input_dim")
         if emb_a.size(0) != emb_b.size(0):
@@ -477,15 +470,11 @@ class V5(nn.Module):
         lengths_a = merged_batch.get("len_a")
         lengths_b = merged_batch.get("len_b")
         if lengths_a is None:
-            lengths_a = torch.full(
-                (emb_a.size(0),), emb_a.size(1), device=device, dtype=torch.long
-            )
+            lengths_a = torch.full((emb_a.size(0),), emb_a.size(1), device=device, dtype=torch.long)
         else:
             lengths_a = lengths_a.to(device=device, dtype=torch.long)
         if lengths_b is None:
-            lengths_b = torch.full(
-                (emb_b.size(0),), emb_b.size(1), device=device, dtype=torch.long
-            )
+            lengths_b = torch.full((emb_b.size(0),), emb_b.size(1), device=device, dtype=torch.long)
         else:
             lengths_b = lengths_b.to(device=device, dtype=torch.long)
 
@@ -521,18 +510,12 @@ class V5(nn.Module):
         if "label" in merged_batch:
             labels = merged_batch["label"].float()
             logits_for_loss = (
-                logits.squeeze(-1)
-                if logits.dim() > 1 and logits.size(-1) == 1
-                else logits
+                logits.squeeze(-1) if logits.dim() > 1 and logits.size(-1) == 1 else logits
             )
             labels_for_loss = (
-                labels.squeeze(-1)
-                if labels.dim() > 1 and labels.size(-1) == 1
-                else labels
+                labels.squeeze(-1) if labels.dim() > 1 and labels.size(-1) == 1 else labels
             )
-            loss = nn.functional.binary_cross_entropy_with_logits(
-                logits_for_loss, labels_for_loss
-            )
+            loss = nn.functional.binary_cross_entropy_with_logits(logits_for_loss, labels_for_loss)
             output["loss"] = loss
 
         return output

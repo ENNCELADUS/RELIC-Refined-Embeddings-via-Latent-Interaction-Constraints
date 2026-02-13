@@ -39,7 +39,7 @@ def run_evaluation_stage(
     config: ConfigDict,
     model: torch.nn.Module,
     device: torch.device,
-    dataloaders: dict[str, torch.utils.data.DataLoader[dict[str, torch.Tensor]]],
+    dataloaders: dict[str, torch.utils.data.DataLoader[dict[str, object]]],
     run_id: str,
     checkpoint_path: Path,
     distributed_context: DistributedContext,

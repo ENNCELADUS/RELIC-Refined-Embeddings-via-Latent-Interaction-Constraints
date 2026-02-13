@@ -1,16 +1,17 @@
+"""V4 PPI classifier with cross-attention and residual MLP head."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import cast
 
 import torch
 import torch.nn as nn
 
-from src.model.v3 import SiameseEncoder, _build_padding_mask
+from src.model.v3 import SiameseEncoder, _build_padding_mask, _to_int
 
 
 class AttentionPooling(nn.Module):
-    """
-    Pool a sequence to a single vector via a learned query.
+    """Pool a sequence to a single vector via a learned query.
 
     A learnable query vector attends to all positions in the input sequence
     using multi-head attention, producing a fixed-size representation.
@@ -28,22 +29,21 @@ class AttentionPooling(nn.Module):
             batch_first=True,
         )
 
-    def forward(
-        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """Pool one sequence into a fixed-size embedding.
+
         Args:
             x: Input tensor of shape (batch, seq_len, d_model)
             mask: Optional padding mask of shape (batch, seq_len), True = masked
 
         Returns:
-            Pooled tensor of shape (batch, d_model)
+            Pooled tensor of shape (batch, d_model).
         """
         batch_size = x.size(0)
         query = self.query.expand(batch_size, -1, -1)
         x_norm = self.norm(x)
         out, _ = self.attn(query, x_norm, x_norm, key_padding_mask=mask)
-        return out.squeeze(1)
+        return cast(torch.Tensor, out.squeeze(1))
 
 
 def _build_activation(name: str) -> nn.Module:
@@ -58,8 +58,7 @@ def _build_activation(name: str) -> nn.Module:
 
 
 class CrossAttentionLayer(nn.Module):
-    """
-    Shared-weight bidirectional cross-attention block with FFN.
+    """Shared-weight bidirectional cross-attention block with FFN.
 
     Each direction applies:
       x = x + Dropout(CrossAttn(LN(x)))
@@ -90,25 +89,24 @@ class CrossAttentionLayer(nn.Module):
         self,
         query: torch.Tensor,
         key_value: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor],
+        key_padding_mask: torch.Tensor | None,
     ) -> torch.Tensor:
         query_norm = self.norm_attn(query)
-        attn_out, _ = self.attn(
-            query_norm, key_value, key_value, key_padding_mask=key_padding_mask
-        )
-        return query + self.drop_attn(attn_out)
+        attn_out, _ = self.attn(query_norm, key_value, key_value, key_padding_mask=key_padding_mask)
+        return query + cast(torch.Tensor, self.drop_attn(attn_out))
 
     def _ffn(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.drop_ffn(self.ffn(self.norm_ffn(x)))
+        return x + cast(torch.Tensor, self.drop_ffn(self.ffn(self.norm_ffn(x))))
 
     def forward(
         self,
         h_a: torch.Tensor,
         h_b: torch.Tensor,
-        mask_a: Optional[torch.Tensor],
-        mask_b: Optional[torch.Tensor],
+        mask_a: torch.Tensor | None,
+        mask_b: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
+        """Apply one bidirectional cross-attention block.
+
         Args:
             h_a: Protein A representations (batch, seq_a, d_model)
             h_b: Protein B representations (batch, seq_b, d_model)
@@ -116,7 +114,7 @@ class CrossAttentionLayer(nn.Module):
             mask_b: Padding mask for B (batch, seq_b), True = masked
 
         Returns:
-            Updated (h_a, h_b) after cross-attention
+            Updated (h_a, h_b) after cross-attention.
         """
         h_a = self._attend(h_a, h_b, mask_b)
         h_a = self._ffn(h_a)
@@ -128,16 +126,13 @@ class CrossAttentionLayer(nn.Module):
 
 
 class InteractionCrossAttention(nn.Module):
-    """
-    Stacked shared-weight bidirectional cross-attention with FFN.
+    """Stacked shared-weight bidirectional cross-attention with FFN.
 
     Exchanges information between two protein sequences through
     multiple shared-weight cross-attention blocks.
     """
 
-    def __init__(
-        self, d_model: int, n_heads: int, n_layers: int, dropout: float
-    ) -> None:
+    def __init__(self, d_model: int, n_heads: int, n_layers: int, dropout: float) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
             CrossAttentionLayer(d_model=d_model, n_heads=n_heads, dropout=dropout)
@@ -151,7 +146,8 @@ class InteractionCrossAttention(nn.Module):
         lengths_a: torch.Tensor,
         lengths_b: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
+        """Run stacked bidirectional cross-attention.
+
         Args:
             h_a: Protein A representations (batch, seq_a, d_model)
             h_b: Protein B representations (batch, seq_b, d_model)
@@ -159,7 +155,7 @@ class InteractionCrossAttention(nn.Module):
             lengths_b: Actual lengths for B (batch,)
 
         Returns:
-            (h_a', h_b') after cross-attention layers
+            (h_a', h_b') after cross-attention layers.
         """
         if h_a.dim() != 3 or h_b.dim() != 3:
             raise ValueError(
@@ -176,15 +172,15 @@ class InteractionCrossAttention(nn.Module):
         for layer in self.layers:
             h_a, h_b = layer(h_a, h_b, mask_a, mask_b)
 
+        if mask_a is None or mask_b is None:
+            raise ValueError("Cross-attention masks must be available for length-aware pooling")
         return h_a, h_b, mask_a, mask_b
 
 
 class ResidualMLPBlock(nn.Module):
     """Residual MLP block with LayerNorm, activation, and dropout."""
 
-    def __init__(
-        self, input_dim: int, hidden_dim: int, dropout: float, activation: str
-    ) -> None:
+    def __init__(self, input_dim: int, hidden_dim: int, dropout: float, activation: str) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(input_dim)
         self.fc1 = nn.Linear(input_dim, hidden_dim)
@@ -193,12 +189,13 @@ class ResidualMLPBlock(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run one residual MLP block."""
         h = self.fc1(self.norm(x))
         h = self.act(h)
         h = self.drop(h)
         h = self.fc2(h)
         h = self.drop(h)
-        return x + h
+        return cast(torch.Tensor, x + h)
 
 
 class ResidualMLPHead(nn.Module):
@@ -236,14 +233,14 @@ class ResidualMLPHead(nn.Module):
                     nn.init.zeros_(module.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute one logit from pair features."""
         for block in self.blocks:
             x = block(x)
-        return self.output(x)
+        return cast(torch.Tensor, self.output(x))
 
 
 class V4(nn.Module):
-    """
-    V4 PPI Classifier - Ablation model for V3.
+    """V4 PPI Classifier - Ablation model for V3.
 
     Architecture:
     1. SiameseEncoder (V2-style): Linear projection + dropout + norm (no self-attention)
@@ -255,7 +252,7 @@ class V4(nn.Module):
 
     name: str = "v4"
 
-    def __init__(self, **model_config: Any) -> None:
+    def __init__(self, **model_config: object) -> None:
         super().__init__()
         required_fields = [
             "input_dim",
@@ -268,19 +265,21 @@ class V4(nn.Module):
         if missing:
             raise ValueError(f"Missing required model configuration fields: {missing}")
 
-        self.input_dim: int = int(model_config["input_dim"])
-        self.d_model: int = int(model_config["d_model"])
-        self.encoder_layers: int = int(model_config["encoder_layers"])
-        self.cross_attn_layers: int = int(model_config["cross_attn_layers"])
-        self.n_heads: int = int(model_config["n_heads"])
+        self.input_dim = _to_int(model_config["input_dim"], "model_config.input_dim")
+        self.d_model = _to_int(model_config["d_model"], "model_config.d_model")
+        self.encoder_layers = _to_int(model_config["encoder_layers"], "model_config.encoder_layers")
+        self.cross_attn_layers = _to_int(
+            model_config["cross_attn_layers"],
+            "model_config.cross_attn_layers",
+        )
+        self.n_heads = _to_int(model_config["n_heads"], "model_config.n_heads")
 
-        mlp_cfg: Dict[str, Any] = model_config.get("mlp_head", {})
-        if not mlp_cfg:
+        mlp_cfg_raw = model_config.get("mlp_head", {})
+        if not isinstance(mlp_cfg_raw, dict) or not mlp_cfg_raw:
             raise ValueError("mlp_head configuration is required for V4")
+        mlp_cfg = mlp_cfg_raw
         if "hidden_dims" not in mlp_cfg or "dropout" not in mlp_cfg:
-            raise ValueError(
-                "mlp_head.hidden_dims and mlp_head.dropout must be provided"
-            )
+            raise ValueError("mlp_head.hidden_dims and mlp_head.dropout must be provided")
         self.mlp_hidden_dims = list(mlp_cfg["hidden_dims"])
         self.mlp_dropout = float(mlp_cfg["dropout"])
         self.mlp_activation = mlp_cfg.get("activation", "gelu")
@@ -288,9 +287,10 @@ class V4(nn.Module):
         if str(self.mlp_norm).lower() not in {"layernorm", "ln"}:
             raise ValueError("mlp_head.norm must be 'layernorm' for V4")
 
-        reg_cfg: Dict[str, Any] = model_config.get("regularization", {})
-        if "dropout" not in reg_cfg:
+        reg_cfg_raw = model_config.get("regularization", {})
+        if not isinstance(reg_cfg_raw, dict) or "dropout" not in reg_cfg_raw:
             raise ValueError("regularization.dropout must be provided for V4")
+        reg_cfg = reg_cfg_raw
         self.encoder_dropout = float(reg_cfg["dropout"])
         self.cross_attention_dropout = float(
             reg_cfg.get("cross_attention_dropout", self.encoder_dropout)
@@ -343,6 +343,7 @@ class V4(nn.Module):
         batch: dict[str, torch.Tensor] | None = None,
         **kwargs: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
+        """Run model forward pass for embedding-backed pair inputs."""
         merged_batch: dict[str, torch.Tensor] = {}
         if batch is not None:
             merged_batch.update(batch)
@@ -354,9 +355,7 @@ class V4(nn.Module):
         emb_a = merged_batch["emb_a"]
         emb_b = merged_batch["emb_b"]
         if emb_a.dim() != 3 or emb_b.dim() != 3:
-            raise ValueError(
-                "Input embeddings must be shaped (batch, seq_len, embedding_dim)"
-            )
+            raise ValueError("Input embeddings must be shaped (batch, seq_len, embedding_dim)")
         if emb_a.size(2) != self.input_dim or emb_b.size(2) != self.input_dim:
             raise ValueError("Input embedding dimension must match model input_dim")
         if emb_a.size(0) != emb_b.size(0):
@@ -366,15 +365,11 @@ class V4(nn.Module):
         lengths_a = merged_batch.get("len_a")
         lengths_b = merged_batch.get("len_b")
         if lengths_a is None:
-            lengths_a = torch.full(
-                (emb_a.size(0),), emb_a.size(1), device=device, dtype=torch.long
-            )
+            lengths_a = torch.full((emb_a.size(0),), emb_a.size(1), device=device, dtype=torch.long)
         else:
             lengths_a = lengths_a.to(device=device, dtype=torch.long)
         if lengths_b is None:
-            lengths_b = torch.full(
-                (emb_b.size(0),), emb_b.size(1), device=device, dtype=torch.long
-            )
+            lengths_b = torch.full((emb_b.size(0),), emb_b.size(1), device=device, dtype=torch.long)
         else:
             lengths_b = lengths_b.to(device=device, dtype=torch.long)
 
@@ -383,9 +378,7 @@ class V4(nn.Module):
         encoded_b = self.encoder(emb_b, lengths_b)
 
         # Cross-attention (bidirectional, shared weights, with FFN)
-        h_a, h_b, mask_a, mask_b = self.cross_attention(
-            encoded_a, encoded_b, lengths_a, lengths_b
-        )
+        h_a, h_b, mask_a, mask_b = self.cross_attention(encoded_a, encoded_b, lengths_a, lengths_b)
 
         # Attention pooling
         v_a = self.pool_a(h_a, mask_a)  # [batch, d_model]
@@ -406,19 +399,13 @@ class V4(nn.Module):
             labels = merged_batch["label"].float()
             # Normalize logits shape: (N, 1) → (N,) and (N, 1) labels → (N,)
             logits_for_loss = (
-                logits.squeeze(-1)
-                if logits.dim() > 1 and logits.size(-1) == 1
-                else logits
+                logits.squeeze(-1) if logits.dim() > 1 and logits.size(-1) == 1 else logits
             )
             labels_for_loss = (
-                labels.squeeze(-1)
-                if labels.dim() > 1 and labels.size(-1) == 1
-                else labels
+                labels.squeeze(-1) if labels.dim() > 1 and labels.size(-1) == 1 else labels
             )
             # Compute BCE loss with logits
-            loss = nn.functional.binary_cross_entropy_with_logits(
-                logits_for_loss, labels_for_loss
-            )
+            loss = nn.functional.binary_cross_entropy_with_logits(logits_for_loss, labels_for_loss)
             output["loss"] = loss
 
         return output

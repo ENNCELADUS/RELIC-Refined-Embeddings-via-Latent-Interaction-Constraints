@@ -14,10 +14,11 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
 from src.evaluate import Evaluator
-from src.model import V3, V4, V5
-from src.train import NoOpStrategy, StagedUnfreezeStrategy, Trainer
+from src.model import V3, V4, V5, V6
+from src.train.base import Trainer
 from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
-from src.train.strategies import OHEMSampleStrategy
+from src.train.strategies.lifecycle import NoOpStrategy, StagedUnfreezeStrategy, TrainingStrategy
+from src.train.strategies.ohem import OHEMSampleStrategy
 from src.utils.config import (
     ConfigDict,
     as_bool,
@@ -71,10 +72,16 @@ def _build_v5_model(model_kwargs: ConfigDict) -> nn.Module:
     return V5(**model_kwargs)
 
 
+def _build_v6_model(model_kwargs: ConfigDict) -> nn.Module:
+    """Build V6 model instance."""
+    return V6(**model_kwargs)
+
+
 MODEL_FACTORIES: dict[str, ModelFactory] = {
     "v3": _build_v3_model,
     "v4": _build_v4_model,
     "v5": _build_v5_model,
+    "v6": _build_v6_model,
 }
 
 
@@ -281,7 +288,7 @@ def build_trainer(
     return trainer, loss_config
 
 
-def build_strategy(config: ConfigDict) -> NoOpStrategy | StagedUnfreezeStrategy:
+def build_strategy(config: ConfigDict) -> TrainingStrategy:
     """Build optional training strategy from config."""
     training_cfg = get_section(config, "training_config")
     strategy_cfg = training_cfg.get("strategy")
@@ -319,7 +326,7 @@ def run_training_stage(
     config: ConfigDict,
     model: nn.Module,
     device: torch.device,
-    dataloaders: dict[str, torch.utils.data.DataLoader[dict[str, torch.Tensor]]],
+    dataloaders: dict[str, torch.utils.data.DataLoader[dict[str, object]]],
     run_id: str,
     distributed_context: DistributedContext,
 ) -> Path:

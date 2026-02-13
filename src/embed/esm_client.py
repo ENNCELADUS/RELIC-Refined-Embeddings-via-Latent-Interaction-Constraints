@@ -17,7 +17,6 @@ from src.embed.config import (
     _Esm3ClassProtocol,
     _Esm3ModelProtocol,
     _LogitsConfigCtorProtocol,
-    _LogitsOutputProtocol,
     _ProteinCtorProtocol,
 )
 
@@ -93,8 +92,7 @@ def _embed_sequence_with_esm3(
     with torch.no_grad():
         protein_tensor = model.encode(protein)
         sequence_output = model.logits(protein_tensor, logits_config)
-    sequence_output_typed = cast(_LogitsOutputProtocol, sequence_output)
-    embeddings = sequence_output_typed.embeddings
+    embeddings = sequence_output.embeddings
     if embeddings is None:
         raise ValueError("ESM3 did not return embeddings")
 

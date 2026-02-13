@@ -86,6 +86,55 @@ class OHEMProbeModel(nn.Module):
         return {"logits": logits.unsqueeze(-1)}
 
 
+class SequenceFieldDataset(Dataset[dict[str, object]]):
+    """Toy dataset including non-tensor sequence fields."""
+
+    def __init__(self) -> None:
+        self._records = [("AAAA", 1.0), ("BB", 0.0), ("CCC", 1.0), ("D", 0.0)]
+
+    def __len__(self) -> int:
+        """Return dataset size."""
+        return len(self._records)
+
+    def __getitem__(self, index: int) -> dict[str, object]:
+        """Return one dataset example."""
+        sequence, label = self._records[index]
+        return {"seq_a": sequence, "label": torch.tensor(label, dtype=torch.float32)}
+
+
+def _collate_sequence(batch: list[dict[str, object]]) -> dict[str, object]:
+    labels: list[torch.Tensor] = []
+    seq_a: list[str] = []
+    for sample in batch:
+        label_value = sample.get("label")
+        sequence = sample.get("seq_a")
+        if not isinstance(label_value, torch.Tensor):
+            raise TypeError("label must be tensor")
+        if not isinstance(sequence, str):
+            raise TypeError("seq_a must be string")
+        labels.append(label_value)
+        seq_a.append(sequence)
+    return {"seq_a": seq_a, "label": torch.stack(labels, dim=0)}
+
+
+class SequenceAwareModel(nn.Module):
+    """Toy model that consumes sequence lists plus tensor labels."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = nn.Linear(1, 1)
+
+    def forward(self, seq_a: list[str], label: torch.Tensor) -> dict[str, torch.Tensor]:
+        del label
+        lengths = torch.tensor(
+            [len(sequence) for sequence in seq_a],
+            dtype=torch.float32,
+            device=self.linear.weight.device,
+        ).unsqueeze(-1)
+        logits = self.linear(lengths).squeeze(-1)
+        return {"logits": logits.unsqueeze(-1)}
+
+
 def test_trainer_runs_single_epoch() -> None:
     model = TinyModel()
     loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)
@@ -103,6 +152,29 @@ def test_trainer_runs_single_epoch() -> None:
     metrics = trainer.train_one_epoch(loader)
     assert "loss" in metrics
     assert "lr" in metrics
+    assert metrics["loss"] >= 0.0
+
+
+def test_trainer_handles_non_tensor_batch_fields() -> None:
+    model = SequenceAwareModel()
+    loader = DataLoader(
+        SequenceFieldDataset(),
+        batch_size=2,
+        shuffle=False,
+        collate_fn=_collate_sequence,
+    )
+    trainer = Trainer(
+        model=model,
+        device=torch.device("cpu"),
+        optimizer_config=OptimizerConfig(optimizer_type="adamw", lr=1e-2),
+        scheduler_config=SchedulerConfig(scheduler_type="none"),
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+        use_amp=False,
+        total_epochs=1,
+        steps_per_epoch=len(loader),
+    )
+    metrics = trainer.train_one_epoch(loader)
+    assert "loss" in metrics
     assert metrics["loss"] >= 0.0
 
 
@@ -262,6 +334,30 @@ def test_evaluator_returns_metric_dictionary() -> None:
     assert "val_accuracy" in metrics
     assert "val_f1" in metrics
     assert "val_auroc" in metrics
+
+
+def test_evaluator_handles_non_tensor_batch_fields() -> None:
+    model = SequenceAwareModel()
+    loader = DataLoader(
+        SequenceFieldDataset(),
+        batch_size=2,
+        shuffle=False,
+        collate_fn=_collate_sequence,
+    )
+    evaluator = Evaluator(
+        metrics=["accuracy", "f1", "auroc"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+    )
+    model.eval()
+    with torch.no_grad():
+        metrics = evaluator.evaluate(
+            model=model,
+            data_loader=loader,
+            device=torch.device("cpu"),
+            prefix="val",
+        )
+    assert "val_loss" in metrics
+    assert "val_accuracy" in metrics
 
 
 def test_evaluator_without_prefix_returns_raw_metric_names() -> None:

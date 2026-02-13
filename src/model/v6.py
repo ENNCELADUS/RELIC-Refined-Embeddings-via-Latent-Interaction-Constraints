@@ -1,0 +1,666 @@
+"""V6 PPI Classifier - ESM3 backbone with LoRA + token-level cross-attention head."""
+
+from __future__ import annotations
+
+import math
+import warnings
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import Protocol, cast
+
+import torch
+import torch.nn as nn
+from torch.nn.utils.rnn import pad_sequence
+
+from src.model.v3 import _build_padding_mask, _to_float, _to_int
+
+
+class _ProteinFactory(Protocol):
+    """Callable protocol for constructing ESM protein objects."""
+
+    def __call__(self, *, sequence: str) -> object:
+        """Build one ESM protein instance from raw sequence."""
+
+
+class _Esm3LogitsOutput(Protocol):
+    """Protocol for ESM logits outputs exposing token embeddings."""
+
+    embeddings: torch.Tensor | None
+
+
+class _Esm3Runtime(Protocol):
+    """Protocol for runtime ESM calls used during V6 forward passes."""
+
+    def encode(self, protein: object) -> object:
+        """Encode one protein object or a batch of protein objects."""
+
+    def logits(self, protein_tensor: object, logits_config: object) -> _Esm3LogitsOutput:
+        """Compute logits and embeddings for encoded proteins."""
+
+
+class LoRALinear(nn.Module):
+    """LoRA wrapper for a Linear layer (trainable low-rank adapters only)."""
+
+    def __init__(
+        self,
+        base: nn.Linear,
+        r: int,
+        alpha: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        if r < 0:
+            raise ValueError("LoRA rank r must be non-negative")
+        if alpha <= 0:
+            raise ValueError("LoRA alpha must be positive")
+
+        self.base = base
+        self.r = int(r)
+        self.alpha = int(alpha)
+        self.scaling = float(alpha) / float(r) if r > 0 else 0.0
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+        # Freeze base weights
+        self.base.weight.requires_grad = False
+        if self.base.bias is not None:
+            self.base.bias.requires_grad = False
+
+        self.lora_a: nn.Linear | None
+        self.lora_b: nn.Linear | None
+        if self.r > 0:
+            self.lora_a = nn.Linear(self.base.in_features, self.r, bias=False)
+            self.lora_b = nn.Linear(self.r, self.base.out_features, bias=False)
+            nn.init.kaiming_uniform_(self.lora_a.weight, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_b.weight)
+        else:
+            self.lora_a = None
+            self.lora_b = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the frozen base projection plus optional LoRA update."""
+        result = self.base(x)
+        if self.r > 0 and self.lora_a is not None and self.lora_b is not None:
+            result = result + self.lora_b(self.lora_a(self.dropout(x))) * self.scaling
+        return cast(torch.Tensor, result)
+
+
+class MLPHead(nn.Module):
+    """Fixed 4d -> 2d -> d -> 1 MLP with GELU, LayerNorm, and dropout."""
+
+    def __init__(self, d_model: int, dropout: float) -> None:
+        super().__init__()
+        if not 0.0 <= dropout <= 1.0:
+            raise ValueError("dropout must be between 0 and 1")
+
+        hidden_2d = 2 * d_model
+        self.layers = nn.Sequential(
+            nn.Linear(4 * d_model, hidden_2d),
+            nn.LayerNorm(hidden_2d),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_2d, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, 1),
+        )
+        self._initialize_weights()
+
+    def _initialize_weights(self) -> None:
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute binary interaction logits from pair features."""
+        return cast(torch.Tensor, self.layers(x))
+
+
+def _resolve_state_dict(checkpoint_path: Path) -> dict[str, torch.Tensor]:
+    state = torch.load(checkpoint_path, map_location="cpu")
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+    if not isinstance(state, dict):
+        raise ValueError("Checkpoint did not contain a state_dict-like object")
+    return state
+
+
+def _get_parent_module(root: nn.Module, name: str) -> tuple[nn.Module, str]:
+    parts = name.split(".")
+    parent = root
+    for part in parts[:-1]:
+        if part.isdigit():
+            parent = cast(nn.ModuleList | nn.Sequential, parent)[int(part)]
+        else:
+            parent = cast(nn.Module, getattr(parent, part))
+    return parent, parts[-1]
+
+
+def apply_lora(
+    model: nn.Module,
+    last_n_layers: int,
+    target_modules: Iterable[str] | None,
+    r: int,
+    alpha: int,
+    dropout: float,
+) -> list[str]:
+    """Inject LoRA into selected Linear layers in the last N transformer blocks."""
+    if not hasattr(model, "transformer") or not hasattr(model.transformer, "blocks"):
+        raise ValueError("ESM3 model missing expected transformer.blocks attribute")
+
+    blocks = cast(Sequence[nn.Module], model.transformer.blocks)
+    total_blocks = len(blocks)
+    if total_blocks == 0:
+        raise ValueError("ESM3 transformer.blocks is empty")
+
+    n_layers = min(max(int(last_n_layers), 1), total_blocks)
+    start_idx = total_blocks - n_layers
+    target_prefixes = [f"transformer.blocks.{i}." for i in range(start_idx, total_blocks)]
+
+    if target_modules is None:
+        target_list: list[str] = []
+    elif isinstance(target_modules, str):
+        target_list = [target_modules]
+    else:
+        target_list = [str(item) for item in target_modules]
+
+    matched: list[str] = []
+    candidate_names: list[str] = []
+
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear):
+            continue
+        if not any(name.startswith(prefix) for prefix in target_prefixes):
+            continue
+        if target_list and not any(substr in name for substr in target_list):
+            continue
+        candidate_names.append(name)
+
+    for name in candidate_names:
+        parent, attr = _get_parent_module(model, name)
+        existing = getattr(parent, attr)
+        if isinstance(existing, LoRALinear):
+            continue
+        setattr(parent, attr, LoRALinear(existing, r=r, alpha=alpha, dropout=dropout))
+        matched.append(name)
+
+    if not matched:
+        warnings.warn(
+            "No target Linear layers matched for LoRA injection. "
+            "Check lora.target_modules and last_n_layers.",
+            stacklevel=2,
+        )
+
+    return matched
+
+
+class SharedCrossAttentionLayer(nn.Module):
+    """Shared-weight bidirectional cross-attention with FFN."""
+
+    def __init__(self, d_model: int, n_heads: int, dropout: float) -> None:
+        super().__init__()
+        self.norm_attn = nn.LayerNorm(d_model)
+        self.norm_ffn = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=n_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(4 * d_model, d_model),
+            nn.Dropout(dropout),
+        )
+        self.drop_attn = nn.Dropout(dropout)
+        self.drop_ffn = nn.Dropout(dropout)
+
+    def _attend(
+        self,
+        query: torch.Tensor,
+        key_value: torch.Tensor,
+        key_padding_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        query_norm = self.norm_attn(query)
+        attn_out, _ = self.attn(query_norm, key_value, key_value, key_padding_mask=key_padding_mask)
+        return query + cast(torch.Tensor, self.drop_attn(attn_out))
+
+    def _ffn(self, x: torch.Tensor) -> torch.Tensor:
+        return x + cast(torch.Tensor, self.drop_ffn(self.ffn(self.norm_ffn(x))))
+
+    def forward(
+        self,
+        h_a: torch.Tensor,
+        h_b: torch.Tensor,
+        mask_a: torch.Tensor | None,
+        mask_b: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run one bidirectional cross-attention layer update."""
+        h_a = self._attend(h_a, h_b, mask_b)
+        h_a = self._ffn(h_a)
+
+        h_b = self._attend(h_b, h_a, mask_a)
+        h_b = self._ffn(h_b)
+
+        return h_a, h_b
+
+
+class CLSPooling(nn.Module):
+    """Cross-attention pooling with learnable CLS tokens."""
+
+    def __init__(self, d_model: int, n_heads: int, dropout: float) -> None:
+        super().__init__()
+        self.cls_a = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.cls_b = nn.Parameter(torch.zeros(1, 1, d_model))
+        nn.init.normal_(self.cls_a, mean=0.0, std=0.02)
+        nn.init.normal_(self.cls_b, mean=0.0, std=0.02)
+
+        self.norm_attn = nn.LayerNorm(d_model)
+        self.norm_ffn = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=n_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, 2 * d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(2 * d_model, d_model),
+            nn.Dropout(dropout),
+        )
+        self.drop_attn = nn.Dropout(dropout)
+        self.drop_ffn = nn.Dropout(dropout)
+
+    def _pool(
+        self,
+        cls_token: torch.Tensor,
+        combined: torch.Tensor,
+        combined_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        cls_norm = self.norm_attn(cls_token)
+        attn_out, _ = self.attn(cls_norm, combined, combined, key_padding_mask=combined_mask)
+        cls_token = cls_token + self.drop_attn(attn_out)
+        cls_token = cls_token + self.drop_ffn(self.ffn(self.norm_ffn(cls_token)))
+        return cls_token
+
+    def forward(
+        self,
+        h_a: torch.Tensor,
+        h_b: torch.Tensor,
+        mask_a: torch.Tensor | None,
+        mask_b: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Pool both proteins into paired CLS-like vectors."""
+        batch_size = h_a.size(0)
+        cls_a = self.cls_a.expand(batch_size, -1, -1)
+        cls_b = self.cls_b.expand(batch_size, -1, -1)
+
+        combined_a = torch.cat([h_a, h_b], dim=1)
+        combined_b = torch.cat([h_b, h_a], dim=1)
+
+        if mask_a is not None and mask_b is not None:
+            mask_ab = torch.cat([mask_a, mask_b], dim=1)
+            mask_ba = torch.cat([mask_b, mask_a], dim=1)
+        else:
+            mask_ab = None
+            mask_ba = None
+
+        cls_a = self._pool(cls_a, combined_a, mask_ab)
+        cls_b = self._pool(cls_b, combined_b, mask_ba)
+
+        return cls_a.squeeze(1), cls_b.squeeze(1)
+
+
+class V6(nn.Module):
+    """V6 PPI classifier with ESM3 backbone and LoRA adaptation."""
+
+    name: str = "v6"
+
+    def __init__(self, **model_config: object) -> None:
+        super().__init__()
+
+        required_fields = ["d_model", "cross_attn_layers", "n_heads", "mlp_head"]
+        missing = [field for field in required_fields if field not in model_config]
+        if missing:
+            raise ValueError(f"Missing required model configuration fields: {missing}")
+
+        self.input_dim = _to_int(model_config.get("input_dim", 1536), "model_config.input_dim")
+        self.d_model = _to_int(model_config["d_model"], "model_config.d_model")
+        self.cross_attn_layers = _to_int(
+            model_config["cross_attn_layers"],
+            "model_config.cross_attn_layers",
+        )
+        self.n_heads = _to_int(model_config["n_heads"], "model_config.n_heads")
+
+        esm_cfg_raw = model_config.get("esm3", {})
+        if not isinstance(esm_cfg_raw, dict):
+            raise ValueError("esm3 configuration must be a mapping")
+        esm_cfg = esm_cfg_raw
+        self.esm3_model_name = esm_cfg.get("model_name", "esm3-open")
+        self.esm3_checkpoint_path = Path(
+            esm_cfg.get("checkpoint_path", "models/esm3/esm3_sm_open_v1_full.pth")
+        )
+        self.strip_cls_eos = bool(esm_cfg.get("strip_cls_eos", True))
+        embed_batch_size = _to_int(
+            esm_cfg.get("embed_batch_size", 0),
+            "model_config.esm3.embed_batch_size",
+        )
+        self.esm3_embed_batch_size = embed_batch_size if embed_batch_size > 0 else None
+        self.combine_pairs = bool(esm_cfg.get("combine_pairs", True))
+
+        lora_cfg_raw = model_config.get("lora", {})
+        if not isinstance(lora_cfg_raw, dict):
+            raise ValueError("lora configuration must be a mapping")
+        lora_cfg = lora_cfg_raw
+        self.lora_last_n_layers = _to_int(
+            lora_cfg.get("last_n_layers", 8),
+            "model_config.lora.last_n_layers",
+        )
+        self.lora_target_modules = lora_cfg.get(
+            "target_modules", ["layernorm_qkv", "out_proj", "ffn"]
+        )
+        self.lora_r = _to_int(lora_cfg.get("r", 8), "model_config.lora.r")
+        self.lora_alpha = _to_int(lora_cfg.get("alpha", 16), "model_config.lora.alpha")
+        self.lora_dropout = _to_float(lora_cfg.get("dropout", 0.05), "model_config.lora.dropout")
+
+        reg_cfg_raw = model_config.get("regularization", {})
+        if not isinstance(reg_cfg_raw, dict):
+            raise ValueError("regularization configuration must be a mapping")
+        reg_cfg = reg_cfg_raw
+        self.dropout = _to_float(reg_cfg.get("dropout", 0.1), "model_config.regularization.dropout")
+        self.cross_attention_dropout = _to_float(
+            reg_cfg.get("cross_attention_dropout", self.dropout),
+            "model_config.regularization.cross_attention_dropout",
+        )
+        self.projection_dropout = _to_float(
+            reg_cfg.get("projection_dropout", self.dropout),
+            "model_config.regularization.projection_dropout",
+        )
+
+        mlp_cfg_raw = model_config.get("mlp_head", {})
+        if not isinstance(mlp_cfg_raw, dict) or not mlp_cfg_raw:
+            raise ValueError("mlp_head configuration is required for V6")
+        mlp_cfg = mlp_cfg_raw
+        if "dropout" not in mlp_cfg:
+            raise ValueError("mlp_head.dropout must be provided for V6")
+        self.mlp_dropout = _to_float(mlp_cfg["dropout"], "model_config.mlp_head.dropout")
+
+        self.esm3 = self._load_esm3()
+        self._esm_protein_cls: _ProteinFactory
+        self._logits_config: object
+        self._esm_protein_cls, self._logits_config = self._load_esm_sdk()
+        self._apply_lora_to_esm3()
+        self._esm3_batch_encode_supported: bool | None = None
+
+        self.projection = nn.Sequential(
+            nn.Linear(self.input_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.Dropout(self.projection_dropout),
+        )
+
+        self.cross_layers = nn.ModuleList(
+            SharedCrossAttentionLayer(
+                d_model=self.d_model,
+                n_heads=self.n_heads,
+                dropout=self.cross_attention_dropout,
+            )
+            for _ in range(self.cross_attn_layers)
+        )
+
+        self.cls_pool = CLSPooling(
+            d_model=self.d_model,
+            n_heads=self.n_heads,
+            dropout=self.cross_attention_dropout,
+        )
+
+        self.output_head = MLPHead(d_model=self.d_model, dropout=self.mlp_dropout)
+
+    def _load_esm3(self) -> nn.Module:
+        try:
+            from esm.models.esm3 import ESM3
+        except ImportError as exc:
+            raise ImportError("ESM3 is not installed. Please run: conda activate esm") from exc
+
+        model = ESM3.from_pretrained(self.esm3_model_name)
+
+        if not self.esm3_checkpoint_path.exists():
+            raise FileNotFoundError(f"ESM3 checkpoint not found: {self.esm3_checkpoint_path}")
+
+        state_dict = _resolve_state_dict(self.esm3_checkpoint_path)
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        if missing or unexpected:
+            raise ValueError(
+                f"ESM3 checkpoint mismatch. Missing keys: {missing}, unexpected keys: {unexpected}"
+            )
+
+        return cast(nn.Module, model)
+
+    def _apply_lora_to_esm3(self) -> None:
+        for param in self.esm3.parameters():
+            param.requires_grad = False
+
+        if self.lora_r <= 0:
+            return
+
+        apply_lora(
+            self.esm3,
+            last_n_layers=self.lora_last_n_layers,
+            target_modules=self.lora_target_modules,
+            r=self.lora_r,
+            alpha=self.lora_alpha,
+            dropout=self.lora_dropout,
+        )
+
+    def _load_esm_sdk(self) -> tuple[_ProteinFactory, object]:
+        try:
+            from esm.sdk.api import ESMProtein, LogitsConfig
+        except ImportError as exc:
+            raise ImportError("ESM3 SDK is not installed. Please run: conda activate esm") from exc
+
+        return cast(_ProteinFactory, ESMProtein), LogitsConfig(
+            sequence=True,
+            return_embeddings=True,
+        )
+
+    def _embed_chunk(self, sequences: Sequence[str]) -> tuple[list[torch.Tensor], torch.Tensor]:
+        if any(not isinstance(seq, str) for seq in sequences):
+            raise TypeError("Sequences must be raw strings")
+        if not sequences:
+            raise ValueError("Sequences must be non-empty")
+
+        if self._esm3_batch_encode_supported is False:
+            return self._embed_chunk_serial(sequences)
+
+        esm3_runtime = cast(_Esm3Runtime, self.esm3)
+        proteins = [self._esm_protein_cls(sequence=seq) for seq in sequences]
+        try:
+            protein_tensor = esm3_runtime.encode(proteins)
+        except Exception as exc:
+            try:
+                from attr.exceptions import NotAnAttrsClassError
+            except ImportError:
+                not_attrs_class_error: type[Exception] | None = None
+            else:
+                not_attrs_class_error = cast(type[Exception], NotAnAttrsClassError)
+
+            if not_attrs_class_error is not None and isinstance(exc, not_attrs_class_error):
+                self._esm3_batch_encode_supported = False
+                warnings.warn(
+                    "ESM3 encode does not accept batched inputs; falling back to "
+                    "per-sequence encoding. Expect slower throughput.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return self._embed_chunk_serial(sequences)
+            raise
+        else:
+            self._esm3_batch_encode_supported = True
+
+        output = esm3_runtime.logits(protein_tensor, self._logits_config)
+        embeddings = output.embeddings
+        if embeddings is None:
+            raise ValueError("ESM3 logits did not return embeddings")
+
+        if embeddings.dim() == 2:
+            embeddings = embeddings.unsqueeze(0)
+
+        seq_lengths = torch.tensor(
+            [len(seq) for seq in sequences],
+            device=embeddings.device,
+            dtype=torch.long,
+        )
+
+        if self.strip_cls_eos:
+            stripped: list[torch.Tensor] = []
+            for idx, seq_len in enumerate(seq_lengths.tolist()):
+                if seq_len <= 0:
+                    stripped.append(embeddings[idx, :0])
+                else:
+                    stripped.append(embeddings[idx, 1 : 1 + seq_len])
+            return stripped, seq_lengths
+
+        kept: list[torch.Tensor] = []
+        for idx, seq_len in enumerate(seq_lengths.tolist()):
+            keep_len = seq_len + 2
+            kept.append(embeddings[idx, :keep_len])
+        return kept, seq_lengths + 2
+
+    def _embed_chunk_serial(
+        self, sequences: Sequence[str]
+    ) -> tuple[list[torch.Tensor], torch.Tensor]:
+        embeddings_list: list[torch.Tensor] = []
+        lengths_list: list[int] = []
+        esm3_runtime = cast(_Esm3Runtime, self.esm3)
+
+        for seq in sequences:
+            protein = self._esm_protein_cls(sequence=seq)
+            protein_tensor = esm3_runtime.encode(protein)
+            output = esm3_runtime.logits(protein_tensor, self._logits_config)
+            embeddings = output.embeddings
+            if embeddings is None:
+                raise ValueError("ESM3 logits did not return embeddings")
+
+            if embeddings.dim() == 2:
+                embeddings = embeddings.unsqueeze(0)
+
+            if embeddings.size(0) != 1:
+                raise ValueError("ESM3 serial encode returned a batch size != 1")
+
+            embedding = embeddings.squeeze(0)
+            seq_len = len(seq)
+            if self.strip_cls_eos:
+                embedding = embedding[1 : 1 + seq_len] if seq_len > 0 else embedding[:0]
+                lengths_list.append(seq_len)
+            else:
+                keep_len = seq_len + 2
+                embedding = embedding[:keep_len]
+                lengths_list.append(keep_len)
+
+            embeddings_list.append(embedding)
+
+        device = embeddings_list[0].device
+        lengths = torch.tensor(lengths_list, device=device, dtype=torch.long)
+        return embeddings_list, lengths
+
+    def _embed_batch(self, sequences: Sequence[str]) -> tuple[torch.Tensor, torch.Tensor]:
+        if not sequences:
+            raise ValueError("Sequences must be non-empty")
+        batch_size = self.esm3_embed_batch_size or len(sequences)
+        if batch_size <= 0:
+            batch_size = len(sequences)
+
+        chunk_embeddings: list[torch.Tensor] = []
+        chunk_lengths: list[torch.Tensor] = []
+        for start in range(0, len(sequences), batch_size):
+            end = start + batch_size
+            emb, lengths = self._embed_chunk(sequences[start:end])
+            chunk_embeddings.extend(emb)
+            chunk_lengths.append(lengths)
+
+        padded = pad_sequence(chunk_embeddings, batch_first=True)
+        lengths = torch.cat(chunk_lengths, dim=0)
+        return padded, lengths
+
+    @staticmethod
+    def _pair_features(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        return torch.cat([a, b, (a - b).abs(), a * b], dim=-1)
+
+    def forward(
+        self,
+        batch: dict[str, object] | None = None,
+        **kwargs: object,
+    ) -> dict[str, torch.Tensor]:
+        """Run model forward pass for raw sequence pair inputs."""
+        merged_batch: dict[str, object] = {}
+        if batch is not None:
+            merged_batch.update(batch)
+        merged_batch.update(kwargs)
+
+        if "seq_a" not in merged_batch or "seq_b" not in merged_batch:
+            raise KeyError("Batch must contain 'seq_a' and 'seq_b' raw sequences")
+
+        seq_a = merged_batch["seq_a"]
+        seq_b = merged_batch["seq_b"]
+
+        if isinstance(seq_a, str) or isinstance(seq_b, str):
+            raise TypeError("seq_a and seq_b must be sequences of strings")
+        if not isinstance(seq_a, (list, tuple)) or not isinstance(seq_b, (list, tuple)):
+            raise TypeError("seq_a and seq_b must be lists or tuples of strings")
+        if any(not isinstance(item, str) for item in seq_a) or any(
+            not isinstance(item, str) for item in seq_b
+        ):
+            raise TypeError("seq_a and seq_b must contain only strings")
+
+        if len(seq_a) != len(seq_b):
+            raise ValueError("Protein pair batches must have matching batch dimension")
+
+        if self.combine_pairs:
+            combined = list(seq_a) + list(seq_b)
+            combined_emb, combined_lengths = self._embed_batch(combined)
+            batch_size = len(seq_a)
+            emb_a = combined_emb[:batch_size]
+            emb_b = combined_emb[batch_size:]
+            lengths_a = combined_lengths[:batch_size]
+            lengths_b = combined_lengths[batch_size:]
+        else:
+            emb_a, lengths_a = self._embed_batch(seq_a)
+            emb_b, lengths_b = self._embed_batch(seq_b)
+
+        if emb_a.size(2) != self.input_dim or emb_b.size(2) != self.input_dim:
+            raise ValueError("ESM3 embedding dimension does not match input_dim")
+
+        h_a = self.projection(emb_a)
+        h_b = self.projection(emb_b)
+
+        mask_a = _build_padding_mask(lengths_a, h_a.size(1))
+        mask_b = _build_padding_mask(lengths_b, h_b.size(1))
+
+        for layer in self.cross_layers:
+            h_a, h_b = layer(h_a, h_b, mask_a, mask_b)
+
+        cls_a, cls_b = self.cls_pool(h_a, h_b, mask_a, mask_b)
+        pair_features = self._pair_features(cls_a, cls_b)
+        logits = self.output_head(pair_features)
+
+        output = {"logits": logits}
+        if "label" in merged_batch:
+            labels_value = merged_batch["label"]
+            if not isinstance(labels_value, torch.Tensor):
+                raise TypeError("label must be a torch.Tensor when provided")
+            labels = labels_value.float()
+            logits_for_loss = (
+                logits.squeeze(-1) if logits.dim() > 1 and logits.size(-1) == 1 else logits
+            )
+            labels_for_loss = (
+                labels.squeeze(-1) if labels.dim() > 1 and labels.size(-1) == 1 else labels
+            )
+            loss = nn.functional.binary_cross_entropy_with_logits(logits_for_loss, labels_for_loss)
+            output["loss"] = loss
+
+        return output
