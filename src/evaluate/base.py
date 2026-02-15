@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import torch
 from sklearn.metrics import (
@@ -22,7 +22,8 @@ from torch.utils.data import DataLoader
 from src.train.config import LossConfig
 from src.utils.losses import binary_classification_loss
 
-BatchValue = torch.Tensor | list[object] | tuple[object, ...] | object
+BatchValue = object
+BatchInput = Mapping[str, BatchValue]
 BatchDict = dict[str, BatchValue]
 
 
@@ -53,7 +54,7 @@ class Evaluator:
         self.loss_config = loss_config
 
     @staticmethod
-    def _batch_tensor(batch: BatchDict, key: str) -> torch.Tensor:
+    def _batch_tensor(batch: BatchInput, key: str) -> torch.Tensor:
         """Return required tensor field from a batch dictionary."""
         value = batch.get(key)
         if not isinstance(value, torch.Tensor):
@@ -61,7 +62,7 @@ class Evaluator:
         return value
 
     @staticmethod
-    def _move_batch_to_device(batch: BatchDict, device: torch.device) -> BatchDict:
+    def _move_batch_to_device(batch: BatchInput, device: torch.device) -> BatchDict:
         """Move tensor fields to target device while preserving non-tensor fields."""
         prepared_batch: BatchDict = {}
         for key, value in batch.items():
@@ -72,7 +73,7 @@ class Evaluator:
         return prepared_batch
 
     @staticmethod
-    def _forward_model(model: nn.Module, batch: BatchDict) -> dict[str, torch.Tensor]:
+    def _forward_model(model: nn.Module, batch: BatchInput) -> dict[str, torch.Tensor]:
         """Execute model forward and validate output contract.
 
         Args:
@@ -200,7 +201,7 @@ class Evaluator:
     def evaluate(
         self,
         model: nn.Module,
-        data_loader: DataLoader[BatchDict],
+        data_loader: DataLoader[Mapping[str, object]],
         device: torch.device,
         prefix: str | None = "val",
     ) -> dict[str, float]:

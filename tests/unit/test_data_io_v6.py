@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 import src.utils.data_io as data_io
@@ -79,11 +80,14 @@ def test_build_dataloaders_routes_to_v6(
 
     monkeypatch.setattr(data_io_v6, "build_dataloaders_v6", _fake_build_dataloaders_v6)
 
-    dataloaders = data_io.build_dataloaders(
-        config=config,
-        distributed=True,
-        rank=1,
-        world_size=4,
+    dataloaders = cast(
+        dict[str, object],
+        data_io.build_dataloaders(
+            config=config,
+            distributed=True,
+            rank=1,
+            world_size=4,
+        ),
     )
 
     assert dataloaders["train"] == "train"

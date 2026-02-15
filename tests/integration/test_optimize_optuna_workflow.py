@@ -6,6 +6,8 @@ import csv
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+from typing import cast
 
 import pytest
 import src.optimize.run as optimize_run
@@ -281,14 +283,15 @@ def test_run_optimization_writes_trials_and_best_params(
 
 def test_optuna_backend_marks_pruned_trials(tmp_path: Path) -> None:
     config = _base_config()
-    search_space = parse_search_space(config["optimization"]["search_space"])
+    optimization_cfg = cast(ConfigDict, config["optimization"])
+    search_space = parse_search_space(optimization_cfg["search_space"])
 
     result = run_optuna_optimization(
         base_config=config,
-        optimization_cfg=config["optimization"],
+        optimization_cfg=optimization_cfg,
         search_space=search_space,
         run_pipeline_fn=_fake_execute_pipeline,
-        optuna_module=_FakeOptunaModule(prune_steps={1: 1}),
+        optuna_module=cast(ModuleType, _FakeOptunaModule(prune_steps={1: 1})),
     )
 
     states = [record.state for record in result.trial_records]
@@ -301,7 +304,8 @@ def test_nas_lite_parameters_are_applied_in_trials(
     tmp_path: Path,
 ) -> None:
     config = _base_config()
-    config["optimization"]["search_space"] = [
+    optimization_cfg = cast(ConfigDict, config["optimization"])
+    optimization_cfg["search_space"] = [
         {
             "name": "optimizer_lr",
             "path": "training_config.optimizer.lr",
@@ -310,7 +314,8 @@ def test_nas_lite_parameters_are_applied_in_trials(
             "high": 1.0e-4,
         }
     ]
-    config["optimization"]["budget"]["n_trials"] = 2
+    budget_cfg = cast(ConfigDict, optimization_cfg["budget"])
+    budget_cfg["n_trials"] = 2
     config["nas_lite"] = {"enabled": True, "method": "arch_params_hpo", "max_candidates": 2}
 
     observed_d_models: list[int] = []
@@ -337,6 +342,6 @@ def test_nas_lite_parameters_are_applied_in_trials(
     assert observed_d_models
     assert all(value in {128, 192, 256} for value in observed_d_models)
 
-    parsed_space = parse_search_space(config["optimization"]["search_space"])
+    parsed_space = parse_search_space(optimization_cfg["search_space"])
     extended_space = extend_with_nas_lite(root_config=config, base_search_space=parsed_space)
     assert any(parameter.name == "nas_d_model" for parameter in extended_space)

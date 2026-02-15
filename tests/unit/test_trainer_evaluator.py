@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as functional
 from src.evaluate import Evaluator
 from src.train.base import OptimizerConfig, SchedulerConfig, Trainer
+from src.utils.config import ConfigDict
 from src.utils.losses import LossConfig
 from src.utils.ohem_sample_strategy import OHEMSampleStrategy
 from torch import nn
@@ -261,7 +262,7 @@ def test_ohem_training_uses_two_phase_forward_and_reduced_backward_batch() -> No
 
 
 def test_training_csv_schema_header_order_regression() -> None:
-    training_cfg = {
+    training_cfg: ConfigDict = {
         "logging": {
             "validation_metrics": ["auprc", "auroc"],
         }

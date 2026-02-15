@@ -70,3 +70,6 @@ def binary_classification_loss(
         pos_weight=pos_weight,
         reduction=reduction,
     )
+
+
+__all__ = ["LossConfig", "binary_classification_loss"]

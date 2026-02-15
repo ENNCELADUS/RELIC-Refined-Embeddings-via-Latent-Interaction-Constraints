@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -184,7 +184,7 @@ def pick_objective_value(*, history: list[float], direction: Direction) -> float
     raise ValueError("optimization.direction must be 'maximize' or 'minimize'")
 
 
-def _resolve_column_name(fieldnames: list[str], expected_header: str) -> str:
+def _resolve_column_name(fieldnames: Sequence[str], expected_header: str) -> str:
     """Resolve a CSV column header ignoring case."""
     normalized_field_map = {field.lower(): field for field in fieldnames}
     key = expected_header.lower()

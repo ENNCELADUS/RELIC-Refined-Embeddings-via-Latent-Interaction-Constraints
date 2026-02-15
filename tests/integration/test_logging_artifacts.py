@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 import src.run as run_module
@@ -185,7 +186,7 @@ def test_non_main_process_does_not_write_stage_artifacts(tmp_path: Path) -> None
             config=config,
             model=model,
             device=torch.device("cpu"),
-            dataloaders=dataloaders,
+            dataloaders=cast(dict[str, DataLoader[dict[str, object]]], dataloaders),
             run_id="rank1_case",
             distributed_context=distributed_context,
         )

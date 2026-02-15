@@ -148,27 +148,37 @@ def sample_parameter(*, trial: object, parameter: SearchParameter) -> object:
     if parameter.parameter_type == "float":
         if parameter.low is None or parameter.high is None:
             raise ValueError(f"Float parameter {parameter.name} requires low/high")
-        kwargs: dict[str, object] = {"log": parameter.log}
         if parameter.step is not None:
-            kwargs["step"] = parameter.step
+            return trial_suggest.suggest_float(
+                parameter.name,
+                float(parameter.low),
+                float(parameter.high),
+                log=parameter.log,
+                step=float(parameter.step),
+            )
         return trial_suggest.suggest_float(
             parameter.name,
             float(parameter.low),
             float(parameter.high),
-            **kwargs,
+            log=parameter.log,
         )
 
     if parameter.parameter_type == "int":
         if parameter.low is None or parameter.high is None:
             raise ValueError(f"Int parameter {parameter.name} requires low/high")
-        kwargs_int: dict[str, object] = {"log": parameter.log}
         if parameter.step is not None:
-            kwargs_int["step"] = int(parameter.step)
+            return trial_suggest.suggest_int(
+                parameter.name,
+                int(parameter.low),
+                int(parameter.high),
+                log=parameter.log,
+                step=int(parameter.step),
+            )
         return trial_suggest.suggest_int(
             parameter.name,
             int(parameter.low),
             int(parameter.high),
-            **kwargs_int,
+            log=parameter.log,
         )
 
     return trial_suggest.suggest_categorical(parameter.name, list(parameter.choices))
