@@ -20,7 +20,7 @@ data_config:
     processed_dir: "data/PRING/species_processed_data/human/BFS"
   embeddings:
     source: "esm3"
-    cache_dir: "data/embeddings/esm3"
+    cache_dir: "data/embeddings/esm3_1024"
   max_sequence_length: 1024
   dataloader:
     train_dataset: "data/PRING/species_processed_data/human/BFS/human_train_ppi.txt"
@@ -32,7 +32,7 @@ data_config:
     sampling:
       strategy: "ohem"  # none | ohem
       warmup_epochs: 5
-      pool_multiplier: 32
+      pool_multiplier: 4
       cap_protein: 4
 
 model_config:
@@ -55,7 +55,7 @@ model_config:
 
 training_config:
   epochs: 50
-  batch_size: 32
+  batch_size: 16
   early_stopping_patience: 10
   monitor_metric: "auprc"
   logging:

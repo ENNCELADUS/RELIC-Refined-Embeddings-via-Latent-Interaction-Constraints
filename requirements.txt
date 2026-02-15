@@ -17,6 +17,7 @@ torchtune==0.6.1
 torchmetrics==1.8.2
 transformers==4.48.1
 lightning-utilities==0.15.2
+optuna==4.7.0
 
 # ============================================================================
 # ESM Models & Language Models

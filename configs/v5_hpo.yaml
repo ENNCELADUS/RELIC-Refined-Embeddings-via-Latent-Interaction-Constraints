@@ -31,7 +31,7 @@ data_config:
     pin_memory: true
     drop_last: true
     sampling:
-      strategy: "none"  # none | ohem
+      strategy: "ohem"  # none | ohem
       warmup_epochs: 2
       pool_multiplier: 16
       cap_protein: 2
@@ -77,7 +77,7 @@ training_config:
     beta1: 0.9
     beta2: 0.999
     eps: 1.0e-8
-    weight_decay: 0.05
+    weight_decay: 0.015
   scheduler:
     type: "onecycle"
     max_lr: 0.00006
@@ -103,3 +103,63 @@ evaluate:
     - "recall"
     - "f1"
     - "mcc"
+
+optimization:
+  enabled: true
+  backend: "optuna"
+  study_name: "v5_hpo"
+  objective_metric: "val_auprc"
+  direction: "maximize"
+  budget:
+    n_trials: 30
+    timeout_minutes: 720
+  execution:
+    trial_mode: "train_only"
+    ddp_per_trial: false
+    catch_oom_as_pruned: true
+  storage:
+    type: "sqlite"
+    url: "sqlite:///artifacts/hpo/v5_hpo.db"
+  sampler:
+    name: "TPESampler"
+    seed: 47
+  pruner:
+    name: "MedianPruner"
+    n_startup_trials: 5
+    n_warmup_steps: 3
+  search_space:
+    - name: "optimizer_lr"
+      path: "training_config.optimizer.lr"
+      type: "float"
+      low: 1.0e-5
+      high: 3.0e-4
+      log: true
+    - name: "weight_decay"
+      path: "training_config.optimizer.weight_decay"
+      type: "float"
+      low: 1.0e-4
+      high: 1.0e-1
+      log: true
+    - name: "batch_size"
+      path: "training_config.batch_size"
+      type: "categorical"
+      choices: [8, 16, 32]
+    - name: "d_model"
+      path: "model_config.d_model"
+      type: "categorical"
+      choices: [128, 192, 256]
+    - name: "encoder_layers"
+      path: "model_config.encoder_layers"
+      type: "int"
+      low: 1
+      high: 4
+    - name: "cross_attn_layers"
+      path: "model_config.cross_attn_layers"
+      type: "int"
+      low: 1
+      high: 4
+
+nas_lite:
+  enabled: true
+  method: "arch_params_hpo"
+  max_candidates: 20
