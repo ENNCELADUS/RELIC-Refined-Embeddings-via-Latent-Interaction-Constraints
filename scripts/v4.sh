@@ -6,7 +6,7 @@
 #SBATCH -t 4-00:00:00
 #SBATCH --mem=300G
 #SBATCH --cpus-per-task=32
-#SBATCH --gres=gpu:NVIDIATITANRTX:4
+#SBATCH --gres=gpu:NVIDIAA40:4
 #SBATCH --exclude=ai_gpu27,ai_gpu28,ai_gpu29
 #SBATCH --output=logs/v4/slurm_%j.out
 #SBATCH --error=logs/v4/slurm_%j.err
