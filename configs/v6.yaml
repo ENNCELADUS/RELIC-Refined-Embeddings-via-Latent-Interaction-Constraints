@@ -2,6 +2,7 @@ run_config:
   mode: "full_pipeline"  # full_pipeline | train_only | eval_only
   seed: 47
   train_run_id: null
+  adapt_run_id: null
   finetune_run_id: null
   eval_run_id: null
   load_checkpoint_path: null
@@ -103,6 +104,25 @@ training_config:
       type: "staged_unfreeze"
       unfreeze_epoch: 3
       initial_trainable_prefixes: ["output_head"]
+  domain_adaptation:
+    enabled: false
+    method: "none"  # none | shot
+    target_split: "test"
+    epochs: 15
+    beta: 0.3
+    entropy_weight: 1.0
+    diversity_weight: 1.0
+    epsilon: 1.0e-5
+    freeze_prefixes: ["output_head"]
+    optimizer:
+      type: "sgd"
+      lr: 1.0e-4
+      momentum: 0.9
+      weight_decay: 1.0e-3
+    scheduler:
+      type: "shot_poly"  # shot_poly | none
+      gamma: 10.0
+      power: 0.75
 
 evaluate:
   metrics:

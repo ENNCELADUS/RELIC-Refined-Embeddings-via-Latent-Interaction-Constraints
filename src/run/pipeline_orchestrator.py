@@ -11,8 +11,10 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
 from src.run.bootstrap import set_global_seed
+from src.run.stage_adapt import run_shot_adaptation_stage
 from src.run.stage_evaluate import run_evaluation_stage
 from src.run.stage_train import _build_stage_runtime, build_model, run_training_stage
+from src.adapt import should_run_shot_adaptation
 from src.utils.config import ConfigDict, as_bool, as_int, as_str, extract_model_kwargs, get_section
 from src.utils.data_io import build_dataloaders
 from src.utils.device import resolve_device
@@ -58,6 +60,20 @@ def _selected_stages_for_mode(mode: str) -> tuple[str, ...]:
     return selected_stages
 
 
+def _selected_stages_with_adaptation(mode: str, shot_enabled: bool) -> tuple[str, ...]:
+    """Return ordered stages for mode with optional SHOT adaptation."""
+    selected = _selected_stages_for_mode(mode)
+    if not shot_enabled:
+        return selected
+    if mode == "full_pipeline":
+        return ("train", "adapt", "evaluate")
+    if mode == "train_only":
+        return ("train", "adapt")
+    if mode == "eval_only":
+        return ("adapt", "evaluate")
+    return selected
+
+
 def _log_event_for_stages(
     *,
     stage_names: Sequence[str],
@@ -100,6 +116,7 @@ def execute_pipeline(
     build_dataloaders_fn: Callable[..., DataLoaderMap] = build_dataloaders,
     build_model_fn: Callable[[ConfigDict], nn.Module] = build_model,
     run_training_stage_fn: Callable[..., Path] = run_training_stage,
+    run_adaptation_stage_fn: Callable[..., Path] = run_shot_adaptation_stage,
     run_evaluation_stage_fn: Callable[..., dict[str, float]] = run_evaluation_stage,
     initialize_distributed_fn: Callable[[bool], DistributedContext] = initialize_distributed,
     cleanup_distributed_fn: Callable[[DistributedContext], None] = cleanup_distributed,
@@ -118,6 +135,7 @@ def execute_pipeline(
     try:
         mode = as_str(run_cfg.get("mode", "full_pipeline"), "run_config.mode").lower()
         train_run_id = generate_run_id(run_cfg.get("train_run_id"))
+        adapt_run_id = generate_run_id(run_cfg.get("adapt_run_id"))
         eval_run_id = generate_run_id(run_cfg.get("eval_run_id"))
         load_checkpoint_value = run_cfg.get("load_checkpoint_path")
         load_checkpoint_path = (
@@ -128,9 +146,13 @@ def execute_pipeline(
         model_name, _ = extract_model_kwargs(config)
         stage_run_map: dict[str, str] = {
             "train": train_run_id,
+            "adapt": adapt_run_id,
             "evaluate": eval_run_id,
         }
-        selected_stages = _selected_stages_for_mode(mode)
+        selected_stages = _selected_stages_with_adaptation(
+            mode=mode,
+            shot_enabled=should_run_shot_adaptation(config),
+        )
         stage_loggers: dict[str, logging.Logger] = {}
         for stage in selected_stages:
             _, _, stage_logger = _build_stage_runtime(
@@ -200,6 +222,7 @@ def execute_pipeline(
             )
 
         train_checkpoint_path: Path | None = None
+        adapt_checkpoint_path: Path | None = None
         if "train" in selected_stages:
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["train"], "begin_training")
@@ -215,11 +238,35 @@ def execute_pipeline(
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["train"], "end_training")
 
+        if "adapt" in selected_stages:
+            base_checkpoint = train_checkpoint_path
+            if base_checkpoint is None:
+                base_checkpoint = load_checkpoint_path
+            if base_checkpoint is None:
+                raise ValueError("load_checkpoint_path is required for eval_only SHOT adaptation")
+            if distributed_context.is_main_process:
+                log_stage_event(stage_loggers["adapt"], "begin_adaptation")
+            adapt_checkpoint_path = run_adaptation_stage_fn(
+                config=config,
+                model=model,
+                device=device,
+                dataloaders=dataloaders,
+                run_id=adapt_run_id,
+                checkpoint_path=base_checkpoint,
+                distributed_context=distributed_context,
+            )
+            if distributed_context.is_main_process:
+                log_stage_event(stage_loggers["adapt"], "end_adaptation")
+
         if "evaluate" in selected_stages:
-            checkpoint_path = _evaluation_checkpoint_path(
-                mode=mode,
-                train_checkpoint_path=train_checkpoint_path,
-                load_checkpoint_path=load_checkpoint_path,
+            checkpoint_path = (
+                adapt_checkpoint_path
+                if adapt_checkpoint_path is not None
+                else _evaluation_checkpoint_path(
+                    mode=mode,
+                    train_checkpoint_path=train_checkpoint_path,
+                    load_checkpoint_path=load_checkpoint_path,
+                )
             )
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["evaluate"], "begin_evaluation")

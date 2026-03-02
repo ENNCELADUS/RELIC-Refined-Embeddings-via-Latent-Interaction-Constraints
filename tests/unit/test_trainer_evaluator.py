@@ -316,6 +316,18 @@ def test_evaluate_csv_schema_header_order_and_required_columns() -> None:
     assert len(run_module.EVAL_CSV_COLUMNS) == len(required_columns)
 
 
+def test_adapt_csv_schema_header_order_and_required_columns() -> None:
+    assert run_module.ADAPT_CSV_COLUMNS == [
+        "Epoch",
+        "Epoch Time",
+        "Entropy Loss",
+        "Diversity Loss",
+        "Pseudo CE Loss",
+        "Total Loss",
+        "Learning Rate",
+    ]
+
+
 def test_evaluator_returns_metric_dictionary() -> None:
     model = TinyModel()
     loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)

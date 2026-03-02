@@ -40,6 +40,7 @@ class PipelineCalls:
     """Recorded mocked pipeline calls."""
 
     training: list[tuple[str, str]] = field(default_factory=list)
+    adaptation: list[tuple[Path, str]] = field(default_factory=list)
     evaluation: list[tuple[Path, str]] = field(default_factory=list)
 
 
@@ -51,6 +52,7 @@ def base_config() -> ConfigDict:
             "mode": "full_pipeline",
             "seed": 7,
             "train_run_id": "train_run",
+            "adapt_run_id": "adapt_run",
             "eval_run_id": "eval_run",
             "load_checkpoint_path": "artifacts/input_checkpoint.pth",
             "save_best_only": True,
@@ -112,6 +114,19 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
         calls.evaluation.append((checkpoint_path, run_id))
         return {"accuracy": 1.0}
 
+    def fake_run_adaptation_stage(
+        config: ConfigDict,
+        model: nn.Module,
+        device: torch.device,
+        dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
+        run_id: str,
+        checkpoint_path: Path,
+        distributed_context: DistributedContext,
+    ) -> Path:
+        del config, model, device, dataloaders, distributed_context
+        calls.adaptation.append((checkpoint_path, run_id))
+        return Path("artifacts/adapt_best_model.pth")
+
     def fake_initialize_distributed(ddp_enabled: bool) -> DistributedContext:
         del ddp_enabled
         return DistributedContext(ddp_enabled=False, is_distributed=False)
@@ -126,6 +141,7 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
     monkeypatch.setattr(run_module, "build_dataloaders", fake_build_dataloaders)
     monkeypatch.setattr(run_module, "build_model", fake_build_model)
     monkeypatch.setattr(run_module, "run_training_stage", fake_run_training_stage)
+    monkeypatch.setattr(run_module, "run_shot_adaptation_stage", fake_run_adaptation_stage)
     monkeypatch.setattr(run_module, "run_evaluation_stage", fake_run_evaluation_stage)
     monkeypatch.setattr(run_module, "initialize_distributed", fake_initialize_distributed)
     monkeypatch.setattr(run_module, "cleanup_distributed", fake_cleanup_distributed)
@@ -140,6 +156,7 @@ def test_execute_pipeline_full_pipeline(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == [
         (Path("artifacts/train_best_model.pth"), "eval_run"),
     ]
@@ -156,6 +173,7 @@ def test_execute_pipeline_train_only(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == []
 
 
@@ -171,7 +189,74 @@ def test_execute_pipeline_eval_only(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == []
+    assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == [(Path("artifacts/eval_input_model.pth"), "eval_run")]
+
+
+def test_execute_pipeline_full_pipeline_with_shot(
+    base_config: ConfigDict,
+    patched_pipeline: PipelineCalls,
+) -> None:
+    training_cfg = base_config["training_config"]
+    assert isinstance(training_cfg, dict)
+    training_cfg["domain_adaptation"] = {
+        "enabled": True,
+        "method": "shot",
+        "target_split": "test",
+    }
+
+    run_module.execute_pipeline(base_config)
+
+    assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.adaptation == [(Path("artifacts/train_best_model.pth"), "adapt_run")]
+    assert patched_pipeline.evaluation == [(Path("artifacts/adapt_best_model.pth"), "eval_run")]
+
+
+def test_execute_pipeline_eval_only_with_shot(
+    base_config: ConfigDict,
+    patched_pipeline: PipelineCalls,
+) -> None:
+    run_cfg = base_config["run_config"]
+    assert isinstance(run_cfg, dict)
+    run_cfg["mode"] = "eval_only"
+    run_cfg["load_checkpoint_path"] = "artifacts/eval_input_model.pth"
+    training_cfg = base_config["training_config"]
+    assert isinstance(training_cfg, dict)
+    training_cfg["domain_adaptation"] = {
+        "enabled": True,
+        "method": "shot",
+        "target_split": "test",
+    }
+
+    run_module.execute_pipeline(base_config)
+
+    assert patched_pipeline.training == []
+    assert patched_pipeline.adaptation == [
+        (Path("artifacts/eval_input_model.pth"), "adapt_run")
+    ]
+    assert patched_pipeline.evaluation == [(Path("artifacts/adapt_best_model.pth"), "eval_run")]
+
+
+def test_execute_pipeline_train_only_with_shot(
+    base_config: ConfigDict,
+    patched_pipeline: PipelineCalls,
+) -> None:
+    run_cfg = base_config["run_config"]
+    assert isinstance(run_cfg, dict)
+    run_cfg["mode"] = "train_only"
+    training_cfg = base_config["training_config"]
+    assert isinstance(training_cfg, dict)
+    training_cfg["domain_adaptation"] = {
+        "enabled": True,
+        "method": "shot",
+        "target_split": "test",
+    }
+
+    run_module.execute_pipeline(base_config)
+
+    assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.adaptation == [(Path("artifacts/train_best_model.pth"), "adapt_run")]
+    assert patched_pipeline.evaluation == []
 
 
 @pytest.mark.parametrize("deprecated_mode", ["pretrain_only", "finetune_from_pretrain"])
