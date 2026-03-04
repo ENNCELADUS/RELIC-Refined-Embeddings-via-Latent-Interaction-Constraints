@@ -2,6 +2,7 @@
 models/
 cache/
 _agent/
+*.json
 
 # Binary & Large File Formats
 *.pkl

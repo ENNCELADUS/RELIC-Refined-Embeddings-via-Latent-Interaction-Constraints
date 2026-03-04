@@ -17,7 +17,7 @@ set -euo pipefail
 
 cd /public/home/wangar2023/relic/
 source ~/.bashrc
-conda activate esm
+conda activate relic
 
 # Automatically detect number of GPUs from SLURM allocation
 NGPUS=$(nvidia-smi -L | wc -l)

@@ -17,7 +17,7 @@ set -euo pipefail
 
 cd /public/home/wangar2023/relic/
 source ~/.bashrc
-conda activate esm
+conda activate relic
 CONFIG_PATH="${1:-configs/v4.yaml}"
 
 # Automatically detect number of GPUs from SLURM allocation
