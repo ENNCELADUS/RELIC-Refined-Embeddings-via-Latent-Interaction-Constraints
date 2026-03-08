@@ -14,6 +14,7 @@ from src.utils.config import ConfigDict, as_bool, as_float, as_int, as_str, get_
 
 BatchValue = object
 BatchInput = Mapping[str, BatchValue]
+_LOW_PRECISION_DTYPES = {torch.float16, torch.bfloat16}
 
 
 @dataclass(frozen=True)
@@ -284,13 +285,22 @@ def compute_centroids(
     return feature_sums / denom
 
 
+def _stable_pair_dtype(left: torch.Tensor, right: torch.Tensor) -> torch.dtype:
+    """Choose a common dtype for SHOT similarity math."""
+    dtype = torch.promote_types(left.dtype, right.dtype)
+    if dtype in _LOW_PRECISION_DTYPES:
+        return torch.float32
+    return dtype
+
+
 def assign_pseudo_labels(
     features: torch.Tensor,
     centroids: torch.Tensor,
     epsilon: float,
 ) -> torch.Tensor:
     """Assign pseudo labels by nearest cosine-similarity centroid."""
-    norm_features = functional.normalize(features, dim=1, eps=epsilon)
-    norm_centroids = functional.normalize(centroids, dim=1, eps=epsilon)
+    compute_dtype = _stable_pair_dtype(features, centroids)
+    norm_features = functional.normalize(features.to(dtype=compute_dtype), dim=1, eps=epsilon)
+    norm_centroids = functional.normalize(centroids.to(dtype=compute_dtype), dim=1, eps=epsilon)
     similarity = norm_features @ norm_centroids.transpose(0, 1)
     return torch.argmax(similarity, dim=1)

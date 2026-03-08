@@ -45,6 +45,14 @@ ADAPT_CSV_COLUMNS = [
 ]
 
 
+def _centroid_accumulation_dtype(probs: torch.Tensor, features: torch.Tensor) -> torch.dtype:
+    """Choose a stable dtype for centroid accumulation under mixed precision."""
+    dtype = torch.promote_types(probs.dtype, features.dtype)
+    if dtype in {torch.float16, torch.bfloat16}:
+        return torch.float32
+    return dtype
+
+
 def _move_batch_to_device(batch: BatchInput, device: torch.device) -> dict[str, BatchValue]:
     """Move tensor fields to target device while preserving non-tensor fields."""
     moved_batch: dict[str, BatchValue] = {}
@@ -239,6 +247,9 @@ def _compute_global_centroids(
             if features.size(0) != probs.size(0):
                 raise RuntimeError("SHOT feature/probability batch size mismatch")
 
+            accumulation_dtype = _centroid_accumulation_dtype(probs=probs, features=features)
+            probs = probs.to(dtype=accumulation_dtype)
+            features = features.to(dtype=accumulation_dtype)
             batch_feature_sums = probs.transpose(0, 1) @ features
             batch_class_masses = probs.sum(dim=0)
 

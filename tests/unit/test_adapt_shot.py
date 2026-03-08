@@ -87,6 +87,34 @@ class _DummyHeadModel(nn.Module):
         return {"logits": self.output_head(x)}
 
 
+class _HalfLogitHeadModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.output_head = nn.Linear(2, 1)
+        nn.init.zeros_(self.output_head.weight)
+        nn.init.zeros_(self.output_head.bias)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        return {"logits": self.output_head(x).to(dtype=torch.float16)}
+
+
+class _TargetFeatureDataset(Dataset[dict[str, torch.Tensor]]):
+    def __init__(self) -> None:
+        self._features = (
+            torch.tensor([1.0, 0.0], dtype=torch.float32),
+            torch.tensor([0.0, 1.0], dtype=torch.float32),
+        )
+
+    def __len__(self) -> int:
+        return len(self._features)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        return {
+            "x": self._features[index],
+            "label": torch.tensor(float(index), dtype=torch.float32),
+        }
+
+
 @pytest.mark.parametrize("feature_dim", [8, 16, 32, 64])
 def test_output_head_feature_hook_captures_batch_aligned_features(feature_dim: int) -> None:
     model = _DummyHeadModel(feature_dim=feature_dim)
@@ -132,6 +160,15 @@ def test_centroid_and_pseudo_labels_handle_zero_mass_class() -> None:
     assert labels.shape == (2,)
 
 
+def test_assign_pseudo_labels_promotes_mixed_precision_inputs() -> None:
+    features = torch.tensor([[2.0, 0.0], [0.0, 2.0]], dtype=torch.float32)
+    centroids = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float16)
+
+    labels = assign_pseudo_labels(features=features, centroids=centroids, epsilon=1.0e-5)
+
+    assert torch.equal(labels, torch.tensor([0, 1], dtype=torch.long))
+
+
 def test_pseudo_label_loss_binary_path() -> None:
     logits = torch.tensor([[0.1], [-0.5], [1.2]], dtype=torch.float32)
     pseudo_labels = torch.tensor([1, 0, 1], dtype=torch.long)
@@ -161,6 +198,37 @@ def test_stage_adapt_all_reduce_helper(monkeypatch: pytest.MonkeyPatch) -> None:
 
     reduced = stage_adapt_module._all_reduce_sum(tensor, context)
     assert torch.allclose(reduced, torch.tensor([2.0, 4.0], dtype=torch.float32))
+
+
+def test_compute_global_centroids_promotes_mixed_precision_inputs() -> None:
+    config = parse_domain_adaptation_config(_base_config())
+    context = DistributedContext(
+        ddp_enabled=False,
+        is_distributed=False,
+        rank=0,
+        local_rank=0,
+        world_size=1,
+    )
+    model = _HalfLogitHeadModel()
+    loader = DataLoader(_TargetFeatureDataset(), batch_size=2, shuffle=False)
+    feature_hook = OutputHeadFeatureHook(model=model)
+
+    try:
+        centroids = stage_adapt_module._compute_global_centroids(
+            model=model,
+            loader=loader,
+            feature_hook=feature_hook,
+            device=torch.device("cpu"),
+            use_amp=False,
+            adaptation_config=config,
+            distributed_context=context,
+        )
+    finally:
+        feature_hook.close()
+
+    expected = torch.tensor([[0.5, 0.5], [0.5, 0.5]], dtype=torch.float32)
+    assert centroids.dtype == torch.float32
+    assert torch.allclose(centroids, expected)
 
 
 class _TinyDataset(Dataset[dict[str, torch.Tensor]]):

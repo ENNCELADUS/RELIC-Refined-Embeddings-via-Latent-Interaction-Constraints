@@ -1,10 +1,10 @@
 run_config:
-  stages: ["train", "evaluate"]
+  stages: ["evaluate"]
   seed: 47
-  train_run_id: null
-  adapt_run_id: null
-  eval_run_id: null
-  load_checkpoint_path: null
+  train_run_id: "20260306_133901"
+  adapt_run_id: "20260306_133901"
+  eval_run_id: "20260306_133901"
+  load_checkpoint_path: "models/v4/train/20260306_133901/best_model.pth"
   save_best_only: true
 
 device_config:

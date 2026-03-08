@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH -J V5
-#SBATCH -p critical
-#SBATCH -A hexm-critical
+#SBATCH -J V5-HPO
+#SBATCH -p hexm
+#SBATCH -A hexm
 #SBATCH -N 1
 #SBATCH -t 4-00:00:00
 #SBATCH --mem=300G
 #SBATCH --cpus-per-task=32
-#SBATCH --gres=gpu:NVIDIATITANRTX:4
+#SBATCH --gres=gpu:NVIDIAA40:4
 #SBATCH --exclude=ai_gpu27,ai_gpu28,ai_gpu29
 #SBATCH --output=logs/v5/slurm_%j.out
 #SBATCH --error=logs/v5/slurm_%j.err
