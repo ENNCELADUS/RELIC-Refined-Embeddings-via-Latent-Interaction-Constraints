@@ -47,7 +47,18 @@ def _ddp_find_unused_parameters(config: ConfigDict) -> bool:
     if explicit_find_unused is not None:
         return as_bool(explicit_find_unused, "device_config.find_unused_parameters")
 
+    run_cfg = get_section(config, "run_config")
+    selected_stages = _selected_stages(run_cfg)
     training_cfg = get_section(config, "training_config")
+    adaptation_cfg = training_cfg.get("domain_adaptation")
+    has_explicit_adaptation_cfg = isinstance(adaptation_cfg, dict)
+    if (
+        has_explicit_adaptation_cfg
+        and should_run_shot_adaptation(config)
+        and "evaluate" in selected_stages
+    ):
+        return True
+
     strategy_cfg = training_cfg.get("strategy")
     if not isinstance(strategy_cfg, dict):
         return False

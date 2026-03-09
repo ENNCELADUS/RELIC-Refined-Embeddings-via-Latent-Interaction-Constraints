@@ -11,6 +11,7 @@ from src.utils.config import ConfigDict
 
 def _base_config() -> ConfigDict:
     return {
+        "run_config": {"stages": ["train", "evaluate"]},
         "device_config": {"device": "cpu", "ddp_enabled": False},
         "training_config": {},
     }
@@ -75,6 +76,19 @@ def test_ddp_find_unused_parameters_honors_device_override() -> None:
     device_cfg["find_unused_parameters"] = False
 
     assert run_module._ddp_find_unused_parameters(config) is False
+
+
+def test_ddp_find_unused_parameters_enables_shot_adaptation_by_default() -> None:
+    config = _base_config()
+    training_cfg = config["training_config"]
+    assert isinstance(training_cfg, dict)
+    training_cfg["domain_adaptation"] = {
+        "enabled": True,
+        "method": "shot",
+        "target_split": "test",
+    }
+
+    assert run_module._ddp_find_unused_parameters(config) is True
 
 
 def test_metrics_from_config_preserves_case_and_order() -> None:
