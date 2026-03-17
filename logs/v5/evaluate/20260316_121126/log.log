@@ -1,0 +1,11 @@
+2026-03-16 12:11:26 INFO Startup | Rank: 0 | Run Id: 20260316_121126 | Seed: 47 | Stages: ['train', 'evaluate'] | World Size: 4
+2026-03-16 12:11:26 INFO Device | Resolved Device: cuda:0
+2026-03-16 12:12:07 INFO Data Ready | Test: 54126 | Train: 97555 | Valid: 24389
+2026-03-16 12:12:10 INFO DDP Ready | Wrapped: True
+2026-03-17 05:38:20 INFO Begin Evaluation
+2026-03-17 05:38:21 INFO Stage Start | Checkpoint: models/v5/train/20260316_121126/best_model.pth | Run Id: 20260316_121126
+2026-03-17 05:38:21 INFO Checkpoint Loaded | Path: models/v5/train/20260316_121126/best_model.pth
+2026-03-17 06:16:31 INFO Evaluation Metrics | Accuracy: 0.5926 | AUPRC: 0.6635 | Auroc: 0.6181 | F1: 0.4140 | Mcc: 0.2338 | Precision: 0.7375 | Recall: 0.2877 | Sensitivity: 0.2877 | Specificity: 0.8976 | Split: test
+2026-03-17 06:16:31 INFO CSV Written | Path: logs/v5/evaluate/20260316_121126/evaluate.csv
+2026-03-17 06:16:31 INFO Stage Done | Run Id: 20260316_121126
+2026-03-17 06:16:34 INFO End Evaluation

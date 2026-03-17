@@ -17,7 +17,6 @@ _agent/
 *.joblib
 *.jsonl
 *.fasta
-*.csv
 
 # Archives
 archives/
