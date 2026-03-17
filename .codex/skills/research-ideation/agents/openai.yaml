@@ -1,0 +1,7 @@
+interface:
+  display_name: "Research Ideation"
+  short_description: "Ranked research ideas grounded in analyzed paper notes"
+  brand_color: "#B45309"
+  default_prompt: "Use $research-ideation to generate and rank research ideas from these analyzed paper notes."
+policy:
+  allow_implicit_invocation: true

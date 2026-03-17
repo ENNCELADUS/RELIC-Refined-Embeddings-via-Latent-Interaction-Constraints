@@ -32,6 +32,7 @@ PRING/
 docs/research/
 docs/report/
 .reports/
+docs/agent/
 
 # LaTeX Cache & Auxiliary Files
 *.aux

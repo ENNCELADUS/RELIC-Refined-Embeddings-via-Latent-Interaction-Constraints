@@ -1,0 +1,7 @@
+interface:
+  display_name: "Deep Research Ingest"
+  short_description: "Download PDFs from a Deep Research report into literature"
+  brand_color: "#1D4ED8"
+  default_prompt: "Use $deep-research-ingest to download PDFs from this Deep Research report into literature/."
+policy:
+  allow_implicit_invocation: true

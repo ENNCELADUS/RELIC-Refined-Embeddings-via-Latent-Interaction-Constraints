@@ -1,0 +1,7 @@
+interface:
+  display_name: "Paper Analysis"
+  short_description: "Gap-focused per-paper reading and vault note writing"
+  brand_color: "#0F766E"
+  default_prompt: "Use $paper-analysis to turn this imported paper into a gap-focused Obsidian note."
+policy:
+  allow_implicit_invocation: true
