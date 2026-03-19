@@ -17,7 +17,7 @@ data_config:
     name: "PRING"
     root_dir: "data/PRING"
     species: "human"
-    split_strategy: "BFS"  # BFS | DFS | RANDOM_WALK
+    split_strategy: "BFS"
     processed_dir: "data/PRING/species_processed_data/human/BFS"
   embeddings:
     source: "esm3"
@@ -31,7 +31,7 @@ data_config:
     pin_memory: true
     drop_last: true
     sampling:
-      strategy: "ohem"  # none | ohem
+      strategy: "ohem"
       warmup_epochs: 5
       pool_multiplier: 8
       cap_protein: 4
@@ -93,7 +93,7 @@ training_config:
     type: "none"
   domain_adaptation:
     enabled: false
-    method: "shot"  # none | shot
+    method: "shot"
     target_split: "test"
     epochs: 5
     beta: 0.3
@@ -107,11 +107,13 @@ training_config:
       momentum: 0.9
       weight_decay: 1.0e-3
     scheduler:
-      type: "shot_poly"  # shot_poly | none
+      type: "shot_poly"
       gamma: 10.0
       power: 0.75
 
 evaluate:
+  decision_threshold:
+    mode: "best_f1_on_valid"
   metrics:
     - "auroc"
     - "auprc"

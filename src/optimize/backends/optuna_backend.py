@@ -11,6 +11,7 @@ from types import ModuleType
 from typing import Protocol, cast
 
 from src.optimize.search_space import SearchParameter, sample_parameter
+from src.optimize.distributed import OptimizationChannel, OptimizationCommand
 from src.optimize.trial_runner import Direction, RunPipelineFn, TrialExecutionResult, execute_trial
 from src.utils.config import ConfigDict, as_bool, as_float, as_int, as_str
 
@@ -72,6 +73,7 @@ def run_optuna_optimization(
     search_space: list[SearchParameter],
     run_pipeline_fn: RunPipelineFn,
     optuna_module: ModuleType | None = None,
+    distributed_channel: OptimizationChannel | None = None,
 ) -> OptunaResult:
     """Run an Optuna study against the current pipeline.
 
@@ -129,6 +131,14 @@ def run_optuna_optimization(
         sampled_values = _sample_trial_values(trial=trial, search_space=search_space)
         typed_trial = cast(_TrialProtocol, trial)
         trial_number = int(typed_trial.number)
+        if distributed_channel is not None:
+            distributed_channel.send(
+                OptimizationCommand(
+                    kind="run_trial",
+                    trial_number=trial_number,
+                    sampled_values=dict(sampled_values),
+                )
+            )
         try:
             trial_result = execute_trial(
                 base_config=base_config,
@@ -145,6 +155,8 @@ def run_optuna_optimization(
             if catch_oom_as_pruned and _is_cuda_oom(exc):
                 raise optuna.TrialPruned(f"OOM pruned: {exc}") from exc
             raise
+        if distributed_channel is not None:
+            distributed_channel.barrier()
         _report_objective_history(optuna=optuna, trial=typed_trial, trial_result=trial_result)
         return trial_result.objective_value
 

@@ -29,6 +29,7 @@ class DistributedContext:
     rank: int = 0
     local_rank: int = 0
     world_size: int = 1
+    owns_process_group: bool = False
 
     @property
     def is_main_process(self) -> bool:
@@ -44,6 +45,19 @@ def initialize_distributed(ddp_enabled: bool) -> DistributedContext:
     """
     if not ddp_enabled:
         return DistributedContext(ddp_enabled=False, is_distributed=False)
+
+    if dist.is_initialized():
+        rank = int(dist.get_rank())
+        world_size = int(dist.get_world_size())
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        return DistributedContext(
+            ddp_enabled=True,
+            is_distributed=world_size > 1,
+            rank=rank,
+            local_rank=local_rank,
+            world_size=world_size,
+            owns_process_group=False,
+        )
 
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
@@ -74,6 +88,7 @@ def initialize_distributed(ddp_enabled: bool) -> DistributedContext:
         rank=rank,
         local_rank=local_rank,
         world_size=world_size,
+        owns_process_group=True,
     )
 
 
@@ -97,7 +112,7 @@ def cleanup_distributed(context: DistributedContext) -> None:
     Args:
         context: Distributed process metadata.
     """
-    if context.is_distributed and dist.is_initialized():
+    if context.is_distributed and context.owns_process_group and dist.is_initialized():
         dist.destroy_process_group()
 
 

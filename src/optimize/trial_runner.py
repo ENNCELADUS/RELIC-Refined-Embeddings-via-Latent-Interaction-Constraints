@@ -112,6 +112,7 @@ def run_best_full_pipeline(
     best_values: Mapping[str, object],
     study_name: str,
     run_pipeline_fn: RunPipelineFn,
+    ddp_per_trial: bool = False,
 ) -> str:
     """Run one full staged pipeline using the best searched parameters.
 
@@ -135,8 +136,9 @@ def run_best_full_pipeline(
     run_cfg["train_run_id"] = f"opt_{study_name}_best_train"
     run_cfg["eval_run_id"] = f"opt_{study_name}_best_eval"
 
-    device_cfg = get_section(final_config, "device_config")
-    device_cfg["ddp_enabled"] = False
+    if not ddp_per_trial:
+        device_cfg = get_section(final_config, "device_config")
+        device_cfg["ddp_enabled"] = False
     run_pipeline_fn(final_config)
     return as_str(run_cfg["train_run_id"], "run_config.train_run_id")
 

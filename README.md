@@ -32,7 +32,7 @@ RELIC uses a config-driven pipeline. Ensure your environment is active:
 conda activate relic
 
 # Run configured stages from YAML (default: train -> evaluate)
-python -m src.run --config configs/v3.yaml
+python -m src.run --config configs/v3/v3.yaml
 
 # To run only selected stages, edit `run_config.stages` in YAML, e.g.:
 # stages: ["train"] or stages: ["evaluate"].

@@ -427,3 +427,29 @@ def test_compute_metrics_characterization_binary_metric_values() -> None:
     assert metrics["recall"] == pytest.approx(0.5)
     assert metrics["f1"] == pytest.approx(0.5)
     assert metrics["mcc"] == pytest.approx(0.0)
+
+
+def test_compute_metrics_respects_custom_decision_threshold() -> None:
+    evaluator = Evaluator(
+        metrics=["accuracy", "precision", "recall", "f1"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+        decision_threshold=0.3,
+    )
+    labels = torch.tensor([0, 0, 1, 1], dtype=torch.long)
+    probabilities = torch.tensor([0.1, 0.4, 0.45, 0.8], dtype=torch.float32)
+
+    metrics = evaluator._compute_metrics(labels=labels, probabilities=probabilities)
+
+    assert metrics["accuracy"] == pytest.approx(0.75)
+    assert metrics["precision"] == pytest.approx(2.0 / 3.0)
+    assert metrics["recall"] == pytest.approx(1.0)
+    assert metrics["f1"] == pytest.approx(0.8)
+
+
+def test_best_f1_threshold_prefers_validation_optimum() -> None:
+    labels = torch.tensor([0, 0, 1, 1], dtype=torch.long)
+    probabilities = torch.tensor([0.1, 0.4, 0.45, 0.8], dtype=torch.float32)
+
+    threshold = Evaluator.best_f1_threshold(labels=labels, probabilities=probabilities)
+
+    assert threshold == pytest.approx(0.45)

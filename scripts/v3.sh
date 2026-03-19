@@ -26,4 +26,21 @@ echo "Detected $NGPUS GPUs"
 export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
-torchrun --standalone --nproc_per_node="$NGPUS" --module src.run --config "$CONFIG_PATH"
+OPTIMIZATION_ENABLED=$(python - <<PY
+import yaml
+from pathlib import Path
+
+config_path = Path("${CONFIG_PATH}")
+with config_path.open("r", encoding="utf-8") as handle:
+    config = yaml.safe_load(handle) or {}
+optimization = config.get("optimization", {})
+enabled = bool(isinstance(optimization, dict) and optimization.get("enabled", False))
+print("1" if enabled else "0")
+PY
+)
+
+if [ "$OPTIMIZATION_ENABLED" = "1" ]; then
+  torchrun --standalone --nproc_per_node="$NGPUS" --module src.optimize.run --config "$CONFIG_PATH"
+else
+  torchrun --standalone --nproc_per_node="$NGPUS" --module src.run --config "$CONFIG_PATH"
+fi

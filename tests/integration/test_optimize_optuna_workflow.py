@@ -12,6 +12,7 @@ from typing import cast
 import pytest
 import src.optimize.run as optimize_run
 from src.optimize.backends.optuna_backend import run_optuna_optimization
+from src.optimize.distributed import OptimizationCommand
 from src.optimize.search_space import extend_with_nas_lite, parse_search_space
 from src.utils.config import ConfigDict
 
@@ -349,3 +350,45 @@ def test_nas_lite_parameters_are_applied_in_trials(
     parsed_space = parse_search_space(optimization_cfg["search_space"])
     extended_space = extend_with_nas_lite(root_config=config, base_search_space=parsed_space)
     assert any(parameter.name == "nas_d_model" for parameter in extended_space)
+
+
+def test_optuna_backend_broadcasts_trial_commands_in_distributed_mode(tmp_path: Path) -> None:
+    config = _base_config()
+    optimization_cfg = cast(ConfigDict, config["optimization"])
+    search_space = parse_search_space(optimization_cfg["search_space"])
+
+    class _RecordingChannel:
+        def __init__(self) -> None:
+            self.commands: list[OptimizationCommand] = []
+            self.barrier_calls = 0
+
+        def send(self, command: OptimizationCommand) -> None:
+            self.commands.append(command)
+
+        def barrier(self) -> None:
+            self.barrier_calls += 1
+
+    channel = _RecordingChannel()
+
+    previous_cwd = Path.cwd()
+    try:
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        import os
+
+        os.chdir(tmp_path)
+        result = run_optuna_optimization(
+            base_config=config,
+            optimization_cfg=optimization_cfg,
+            search_space=search_space,
+            run_pipeline_fn=_fake_execute_pipeline,
+            optuna_module=cast(ModuleType, _FakeOptunaModule()),
+            distributed_channel=channel,
+        )
+    finally:
+        import os
+
+        os.chdir(previous_cwd)
+
+    assert result.study_name == "unit_opt"
+    assert [command.kind for command in channel.commands] == ["run_trial", "run_trial", "run_trial"]
+    assert channel.barrier_calls == 3

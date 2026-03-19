@@ -7,6 +7,7 @@ import csv
 import importlib
 import json
 import logging
+import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
@@ -14,9 +15,16 @@ from typing import cast
 import yaml  # type: ignore[import-untyped]
 
 from src.optimize.backends.optuna_backend import OptunaResult, TrialRecord, run_optuna_optimization
+from src.optimize.distributed import (
+    OptimizationChannel,
+    OptimizationCommand,
+    build_optimization_channel,
+    run_distributed_worker_loop,
+)
 from src.optimize.search_space import extend_with_nas_lite, parse_search_space
 from src.optimize.trial_runner import run_best_full_pipeline
 from src.utils.config import ConfigDict, as_bool, as_int, as_str, load_config
+from src.utils.distributed import cleanup_distributed, initialize_distributed
 
 LOGGER = logging.getLogger(__name__)
 PipelineExecuteFn = Callable[[ConfigDict], None]
@@ -83,23 +91,60 @@ def run_optimization(
     search_space = parse_search_space(optimization_cfg.get("search_space", []))
     search_space = extend_with_nas_lite(root_config=config, base_search_space=search_space)
     _cap_trials_by_nas_lite(config=config, optimization_cfg=optimization_cfg)
+    execution_cfg = _as_config_dict(optimization_cfg.get("execution", {}), "optimization.execution")
 
-    result = run_optuna_optimization(
-        base_config=config,
-        optimization_cfg=optimization_cfg,
-        search_space=search_space,
-        run_pipeline_fn=PIPELINE_EXECUTE_FN,
-    )
-    _write_optuna_artifacts(output_dir=output_dir, result=result)
-    if not skip_final_full_pipeline:
-        best_pipeline_run_id = run_best_full_pipeline(
+    distributed_context = _initialize_optimization_distributed(execution_cfg=execution_cfg)
+    distributed_channel = build_optimization_channel(distributed_context)
+    try:
+        if distributed_context.is_distributed and not distributed_context.is_main_process:
+            run_distributed_worker_loop(
+                base_config=config,
+                search_space=search_space,
+                study_name=study_name,
+                objective_metric=as_str(
+                    optimization_cfg.get("objective_metric", "val_auprc"),
+                    "optimization.objective_metric",
+                ),
+                direction=as_str(
+                    optimization_cfg.get("direction", "maximize"), "optimization.direction"
+                ),
+                execution_cfg=execution_cfg,
+                run_pipeline_fn=PIPELINE_EXECUTE_FN,
+                channel=cast("OptimizationChannel", distributed_channel),
+            )
+            return
+
+        result = run_optuna_optimization(
             base_config=config,
+            optimization_cfg=optimization_cfg,
             search_space=search_space,
-            best_values=result.best_params,
-            study_name=result.study_name,
             run_pipeline_fn=PIPELINE_EXECUTE_FN,
+            distributed_channel=distributed_channel,
         )
-        LOGGER.info("Completed best staged pipeline run: %s", best_pipeline_run_id)
+        _write_optuna_artifacts(output_dir=output_dir, result=result)
+        if not skip_final_full_pipeline:
+            if distributed_channel is not None:
+                distributed_channel.send(
+                    OptimizationCommand(
+                        kind="run_best_pipeline",
+                        best_values=dict(result.best_params),
+                    )
+                )
+            best_pipeline_run_id = run_best_full_pipeline(
+                base_config=config,
+                search_space=search_space,
+                best_values=result.best_params,
+                study_name=result.study_name,
+                run_pipeline_fn=PIPELINE_EXECUTE_FN,
+                ddp_per_trial=distributed_context.is_distributed,
+            )
+            if distributed_channel is not None:
+                distributed_channel.barrier()
+            LOGGER.info("Completed best staged pipeline run: %s", best_pipeline_run_id)
+        if distributed_channel is not None:
+            distributed_channel.send(OptimizationCommand(kind="stop"))
+    finally:
+        cleanup_distributed(distributed_context)
 
 
 def main() -> None:
@@ -124,6 +169,29 @@ def _resolve_optimization_config(config: ConfigDict) -> ConfigDict:
     if not enabled:
         raise ValueError("optimization.enabled must be true to run optimization")
     return optimization_cfg
+
+
+def _initialize_optimization_distributed(*, execution_cfg: ConfigDict):
+    """Initialize one shared process group for distributed optimization sessions."""
+    world_size = as_int(os.environ.get("WORLD_SIZE", "1"), "WORLD_SIZE")
+    ddp_per_trial = as_bool(
+        execution_cfg.get("ddp_per_trial", False),
+        "optimization.execution.ddp_per_trial",
+    )
+    if world_size <= 1:
+        return initialize_distributed(False)
+    if not ddp_per_trial:
+        raise ValueError(
+            "Distributed optimization requires optimization.execution.ddp_per_trial=true"
+        )
+    return initialize_distributed(True)
+
+
+def _as_config_dict(value: object, field_name: str) -> ConfigDict:
+    """Return config mapping or raise."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    return cast(ConfigDict, value)
 
 
 def _cap_trials_by_nas_lite(*, config: ConfigDict, optimization_cfg: ConfigDict) -> None:

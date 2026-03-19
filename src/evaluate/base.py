@@ -12,6 +12,7 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
+    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -49,9 +50,24 @@ class Evaluator:
         loss_config: Loss hyperparameters for consistent loss reporting.
     """
 
-    def __init__(self, metrics: list[str], loss_config: LossConfig) -> None:
+    def __init__(
+        self,
+        metrics: list[str],
+        loss_config: LossConfig,
+        *,
+        decision_threshold: float = 0.5,
+    ) -> None:
         self.metrics = [metric.lower() for metric in metrics]
         self.loss_config = loss_config
+        self.decision_threshold = self._validate_decision_threshold(decision_threshold)
+
+    @staticmethod
+    def _validate_decision_threshold(decision_threshold: float) -> float:
+        """Validate and normalize decision threshold."""
+        threshold = float(decision_threshold)
+        if threshold < 0.0 or threshold > 1.0:
+            raise ValueError("decision_threshold must be in [0, 1]")
+        return threshold
 
     @staticmethod
     def _batch_tensor(batch: BatchInput, key: str) -> torch.Tensor:
@@ -184,7 +200,7 @@ class Evaluator:
         """
         results: dict[str, float] = {}
         has_both_classes = torch.unique(labels).numel() > 1
-        predictions = (probabilities >= 0.5).long()
+        predictions = (probabilities >= self.decision_threshold).long()
         scorers = self._metric_scorers(
             labels=labels,
             probabilities=probabilities,
@@ -198,26 +214,13 @@ class Evaluator:
             results[metric] = score_fn()
         return results
 
-    def evaluate(
+    def _collect_probabilities_and_labels(
         self,
         model: nn.Module,
         data_loader: DataLoader[Mapping[str, object]],
         device: torch.device,
-        prefix: str | None = "val",
-    ) -> dict[str, float]:
-        """Evaluate metrics on a loader.
-
-        The caller controls ``model.eval()`` and ``torch.no_grad()`` context.
-
-        Args:
-            model: Model to evaluate.
-            data_loader: Data loader for the split.
-            device: Device where evaluation runs.
-            prefix: Optional metric name prefix for output keys.
-
-        Returns:
-            Metric dictionary with prefixed names.
-        """
+    ) -> tuple[torch.Tensor, torch.Tensor, float]:
+        """Collect probabilities, labels, and average loss for one loader."""
         all_probs: list[torch.Tensor] = []
         all_labels: list[torch.Tensor] = []
         total_loss = 0.0
@@ -242,10 +245,89 @@ class Evaluator:
             all_probs.append(torch.sigmoid(reduced_logits).detach().cpu())
             all_labels.append(labels.detach().cpu())
 
-        probs_tensor = torch.cat(all_probs, dim=0)
-        labels_tensor = torch.cat(all_labels, dim=0).long()
+        return (
+            torch.cat(all_labels, dim=0).long(),
+            torch.cat(all_probs, dim=0),
+            total_loss / max(1, batch_count),
+        )
+
+    @staticmethod
+    def best_f1_threshold(labels: torch.Tensor, probabilities: torch.Tensor) -> float:
+        """Return the validation threshold that maximizes F1."""
+        if torch.unique(labels).numel() < 2:
+            return 0.5
+
+        label_array = labels.cpu().numpy()
+        prob_array = probabilities.cpu().numpy()
+        precision, recall, thresholds = precision_recall_curve(label_array, prob_array)
+        if len(thresholds) == 0:
+            return 0.5
+
+        best_threshold = 0.5
+        best_score = -1.0
+        best_distance_to_midpoint = float("inf")
+        for precision_value, recall_value, threshold in zip(
+            precision[:-1],
+            recall[:-1],
+            thresholds,
+            strict=False,
+        ):
+            denominator = precision_value + recall_value
+            f1_value = (
+                0.0 if denominator <= 0.0 else (2.0 * precision_value * recall_value) / denominator
+            )
+            threshold_value = float(threshold)
+            distance_to_midpoint = abs(threshold_value - 0.5)
+            if f1_value > best_score or (
+                math.isclose(f1_value, best_score)
+                and distance_to_midpoint < best_distance_to_midpoint
+            ):
+                best_score = float(f1_value)
+                best_threshold = threshold_value
+                best_distance_to_midpoint = distance_to_midpoint
+        return best_threshold
+
+    def select_best_f1_threshold(
+        self,
+        model: nn.Module,
+        data_loader: DataLoader[Mapping[str, object]],
+        device: torch.device,
+    ) -> float:
+        """Select decision threshold on a validation loader by F1."""
+        labels, probabilities, _ = self._collect_probabilities_and_labels(
+            model=model,
+            data_loader=data_loader,
+            device=device,
+        )
+        return self.best_f1_threshold(labels=labels, probabilities=probabilities)
+
+    def evaluate(
+        self,
+        model: nn.Module,
+        data_loader: DataLoader[Mapping[str, object]],
+        device: torch.device,
+        prefix: str | None = "val",
+    ) -> dict[str, float]:
+        """Evaluate metrics on a loader.
+
+        The caller controls ``model.eval()`` and ``torch.no_grad()`` context.
+
+        Args:
+            model: Model to evaluate.
+            data_loader: Data loader for the split.
+            device: Device where evaluation runs.
+            prefix: Optional metric name prefix for output keys.
+
+        Returns:
+            Metric dictionary with prefixed names.
+        """
+        labels_tensor, probs_tensor, average_loss = self._collect_probabilities_and_labels(
+            model=model,
+            data_loader=data_loader,
+            device=device,
+        )
         metric_values = self._compute_metrics(labels=labels_tensor, probabilities=probs_tensor)
-        metric_values["loss"] = total_loss / max(1, batch_count)
+        metric_values["loss"] = average_loss
         if prefix is None:
             return metric_values
         return {f"{prefix}_{key}": value for key, value in metric_values.items()}

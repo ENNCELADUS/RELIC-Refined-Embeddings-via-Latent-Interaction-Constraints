@@ -17,7 +17,7 @@ This document describes how to run automatic HPO and phase-1 NAS-lite on top of 
 
 ## Config Contract
 
-Use `configs/v5_hpo.yaml` as the reference. New top-level sections:
+Use `configs/v5/v5_hpo.yaml` as the reference. New top-level sections:
 
 - `optimization`: backend/budget/sampler/pruner/search space.
 - `nas_lite`: phase-1 architecture search controls.
@@ -33,7 +33,7 @@ Key defaults:
 
 ```bash
 # Optuna mainline
-./scripts/hpo_optuna.sh configs/v5_hpo.yaml
+./scripts/hpo_optuna.sh configs/v5/v5_hpo.yaml
 ```
 
 ## Artifacts
@@ -67,4 +67,4 @@ If a backend package is missing, the optimizer raises an actionable import error
 
 - The optimizer itself is single-process by default (`ddp_per_trial=false`).
 - Keep trial-level GPU usage bounded before scaling trial count.
-- Start with the lightweight budget in `configs/v5_hpo.yaml` and expand gradually.
+- Start with the lightweight budget in `configs/v5/v5_hpo.yaml` and expand gradually.

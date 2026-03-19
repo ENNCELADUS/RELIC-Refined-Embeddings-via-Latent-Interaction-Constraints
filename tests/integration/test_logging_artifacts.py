@@ -201,3 +201,50 @@ def test_non_main_process_does_not_write_stage_artifacts(tmp_path: Path) -> None
     assert not (log_dir / "log.log").exists()
     assert not (log_dir / "training_step.csv").exists()
     assert not best_checkpoint.exists()
+
+
+def test_evaluation_uses_best_f1_threshold_from_validation_and_logs_it(
+    tmp_path: Path,
+) -> None:
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        config = _base_config(stages=["evaluate"])
+        run_cfg = config["run_config"]
+        assert isinstance(run_cfg, dict)
+        run_cfg["load_checkpoint_path"] = "artifacts/input_checkpoint.pth"
+        evaluate_cfg = config["evaluate"]
+        assert isinstance(evaluate_cfg, dict)
+        evaluate_cfg["decision_threshold"] = {"mode": "best_f1_on_valid"}
+
+        dataloaders = _fake_dataloaders()
+        model = _TinyModel()
+        checkpoint_path = Path("artifacts/input_checkpoint.pth")
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), checkpoint_path)
+
+        distributed_context = DistributedContext(ddp_enabled=False, is_distributed=False)
+        metrics = run_module.run_evaluation_stage(
+            config=config,
+            model=model,
+            device=torch.device("cpu"),
+            dataloaders=cast(dict[str, DataLoader[dict[str, object]]], dataloaders),
+            run_id="threshold_eval_case",
+            checkpoint_path=checkpoint_path,
+            distributed_context=distributed_context,
+        )
+    finally:
+        os.chdir(previous_cwd)
+
+    eval_log = tmp_path / "logs" / "v3" / "evaluate" / "threshold_eval_case" / "log.log"
+    eval_csv = tmp_path / "logs" / "v3" / "evaluate" / "threshold_eval_case" / "evaluate.csv"
+    assert eval_log.exists()
+    assert eval_csv.exists()
+
+    log_text = eval_log.read_text(encoding="utf-8")
+    assert "Decision Threshold" in log_text
+    assert "best_f1_on_valid" in log_text
+
+    csv_lines = eval_csv.read_text(encoding="utf-8").splitlines()
+    assert len(csv_lines) == 2
+    assert metrics["recall"] >= 0.5

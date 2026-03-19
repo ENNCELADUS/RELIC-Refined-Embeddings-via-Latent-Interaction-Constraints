@@ -10,7 +10,9 @@ from src.optimize.trial_runner import (
     objective_metric_to_csv_header,
     pick_objective_value,
     read_objective_history,
+    run_best_full_pipeline,
 )
+from src.utils.config import ConfigDict
 
 
 def _write_training_csv(path: Path, rows: list[dict[str, float | int | str]]) -> None:
@@ -68,3 +70,36 @@ def test_pick_objective_value_handles_direction() -> None:
 def test_pick_objective_value_rejects_invalid_direction(direction: str) -> None:
     with pytest.raises(ValueError, match="optimization.direction"):
         pick_objective_value(history=[0.1], direction=direction)
+
+
+def test_run_best_full_pipeline_preserves_ddp_when_requested() -> None:
+    observed: dict[str, object] = {}
+    base_config: ConfigDict = {
+        "run_config": {"stages": ["train"], "seed": 7, "save_best_only": True},
+        "device_config": {"device": "cuda", "ddp_enabled": True, "use_mixed_precision": True},
+        "model_config": {
+            "model": "v3",
+            "input_dim": 1536,
+            "d_model": 512,
+            "encoder_layers": 3,
+            "cross_attn_layers": 3,
+            "n_heads": 8,
+        },
+        "training_config": {"scheduler": {"max_lr": 1.0e-4}},
+    }
+
+    def fake_run_pipeline(config: ConfigDict) -> None:
+        device_cfg = config["device_config"]
+        assert isinstance(device_cfg, dict)
+        observed["ddp_enabled"] = device_cfg["ddp_enabled"]
+
+    run_best_full_pipeline(
+        base_config=base_config,
+        search_space=[],
+        best_values={},
+        study_name="v3_hpo",
+        run_pipeline_fn=fake_run_pipeline,
+        ddp_per_trial=True,
+    )
+
+    assert observed["ddp_enabled"] is True
