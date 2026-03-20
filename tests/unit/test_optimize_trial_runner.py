@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from src.optimize.trial_runner import (
+    build_trial_run_id,
     objective_metric_to_csv_header,
     pick_objective_value,
     read_objective_history,
@@ -72,6 +73,13 @@ def test_pick_objective_value_rejects_invalid_direction(direction: str) -> None:
         pick_objective_value(history=[0.1], direction=direction)
 
 
+def test_build_trial_run_id_uses_timestamp_prefix_and_trial_suffix() -> None:
+    assert (
+        build_trial_run_id(run_id_prefix="20260320_110811", trial_number=7)
+        == "20260320_110811_t0007"
+    )
+
+
 def test_run_best_full_pipeline_preserves_ddp_when_requested() -> None:
     observed: dict[str, object] = {}
     base_config: ConfigDict = {
@@ -97,9 +105,52 @@ def test_run_best_full_pipeline_preserves_ddp_when_requested() -> None:
         base_config=base_config,
         search_space=[],
         best_values={},
-        study_name="v3_hpo",
+        run_id_prefix="20260320_110811",
         run_pipeline_fn=fake_run_pipeline,
         ddp_per_trial=True,
     )
 
     assert observed["ddp_enabled"] is True
+
+
+def test_run_best_full_pipeline_preserves_topology_stage_when_requested() -> None:
+    observed: dict[str, object] = {}
+    base_config: ConfigDict = {
+        "run_config": {
+            "stages": ["train", "evaluate", "topology_evaluate"],
+            "seed": 7,
+            "save_best_only": True,
+        },
+        "device_config": {"device": "cuda", "ddp_enabled": True, "use_mixed_precision": True},
+        "model_config": {
+            "model": "v3",
+            "input_dim": 1536,
+            "d_model": 512,
+            "encoder_layers": 3,
+            "cross_attn_layers": 3,
+            "n_heads": 8,
+        },
+        "training_config": {"scheduler": {"max_lr": 1.0e-4}},
+        "topology_evaluate": {
+            "decision_threshold": {"mode": "best_f1_on_valid"},
+            "report_baselines": "src/topology/baselines/pring_human_table2.json",
+        },
+    }
+
+    def fake_run_pipeline(config: ConfigDict) -> None:
+        run_cfg = config["run_config"]
+        assert isinstance(run_cfg, dict)
+        observed["stages"] = list(run_cfg["stages"])
+        observed["topology_eval_run_id"] = run_cfg["topology_eval_run_id"]
+
+    run_best_full_pipeline(
+        base_config=base_config,
+        search_space=[],
+        best_values={},
+        run_id_prefix="20260320_110811",
+        run_pipeline_fn=fake_run_pipeline,
+        ddp_per_trial=False,
+    )
+
+    assert observed["stages"] == ["train", "evaluate", "topology_evaluate"]
+    assert observed["topology_eval_run_id"] == "20260320_110811_best_topology"

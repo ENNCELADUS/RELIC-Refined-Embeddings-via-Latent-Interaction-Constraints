@@ -1,0 +1,74 @@
+2026-03-20 15:13:51 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['train', 'evaluate'] | World Size: 1
+2026-03-20 15:13:51 INFO Device | Resolved Device: cpu
+2026-03-20 15:13:51 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:13:51 INFO DDP Ready | Wrapped: False
+2026-03-20 15:13:51 INFO Begin Evaluation
+2026-03-20 15:13:51 INFO End Evaluation
+2026-03-20 15:13:51 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['evaluate'] | World Size: 1
+2026-03-20 15:13:51 INFO Device | Resolved Device: cpu
+2026-03-20 15:13:51 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:13:51 INFO Model Init | Model: v3 | Params: 0
+2026-03-20 15:13:51 INFO DDP Ready | Wrapped: False
+2026-03-20 15:13:51 INFO Begin Evaluation
+2026-03-20 15:13:51 INFO End Evaluation
+2026-03-20 15:13:51 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['train', 'evaluate'] | World Size: 1
+2026-03-20 15:13:51 INFO Device | Resolved Device: cpu
+2026-03-20 15:13:51 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:13:51 INFO DDP Ready | Wrapped: False
+2026-03-20 15:13:51 INFO Begin Evaluation
+2026-03-20 15:13:51 INFO End Evaluation
+2026-03-20 15:13:51 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['evaluate'] | World Size: 1
+2026-03-20 15:13:51 INFO Device | Resolved Device: cpu
+2026-03-20 15:13:51 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:13:51 INFO DDP Ready | Wrapped: False
+2026-03-20 15:13:51 INFO Begin Evaluation
+2026-03-20 15:13:51 INFO End Evaluation
+2026-03-20 15:13:51 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['train', 'evaluate', 'topology_evaluate'] | World Size: 1
+2026-03-20 15:13:51 INFO Device | Resolved Device: cpu
+2026-03-20 15:13:51 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:13:51 INFO DDP Ready | Wrapped: False
+2026-03-20 15:13:51 INFO Begin Evaluation
+2026-03-20 15:13:51 INFO End Evaluation
+2026-03-20 15:13:51 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['evaluate'] | World Size: 2
+2026-03-20 15:13:51 INFO Device | Resolved Device: cpu
+2026-03-20 15:13:51 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:13:51 INFO DDP Ready | Wrapped: True
+2026-03-20 15:13:51 INFO Begin Evaluation
+2026-03-20 15:13:51 INFO End Evaluation
+2026-03-20 15:14:42 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['train', 'evaluate'] | World Size: 1
+2026-03-20 15:14:42 INFO Device | Resolved Device: cpu
+2026-03-20 15:14:42 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:14:42 INFO DDP Ready | Wrapped: False
+2026-03-20 15:14:42 INFO Begin Evaluation
+2026-03-20 15:14:42 INFO End Evaluation
+2026-03-20 15:14:42 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['evaluate'] | World Size: 1
+2026-03-20 15:14:42 INFO Device | Resolved Device: cpu
+2026-03-20 15:14:42 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:14:42 INFO Model Init | Model: v3 | Params: 0
+2026-03-20 15:14:42 INFO DDP Ready | Wrapped: False
+2026-03-20 15:14:42 INFO Begin Evaluation
+2026-03-20 15:14:42 INFO End Evaluation
+2026-03-20 15:14:42 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['train', 'evaluate'] | World Size: 1
+2026-03-20 15:14:42 INFO Device | Resolved Device: cpu
+2026-03-20 15:14:42 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:14:42 INFO DDP Ready | Wrapped: False
+2026-03-20 15:14:42 INFO Begin Evaluation
+2026-03-20 15:14:42 INFO End Evaluation
+2026-03-20 15:14:42 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['evaluate'] | World Size: 1
+2026-03-20 15:14:42 INFO Device | Resolved Device: cpu
+2026-03-20 15:14:42 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:14:42 INFO DDP Ready | Wrapped: False
+2026-03-20 15:14:42 INFO Begin Evaluation
+2026-03-20 15:14:42 INFO End Evaluation
+2026-03-20 15:14:42 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['train', 'evaluate', 'topology_evaluate'] | World Size: 1
+2026-03-20 15:14:42 INFO Device | Resolved Device: cpu
+2026-03-20 15:14:42 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:14:42 INFO DDP Ready | Wrapped: False
+2026-03-20 15:14:42 INFO Begin Evaluation
+2026-03-20 15:14:42 INFO End Evaluation
+2026-03-20 15:14:42 INFO Startup | Rank: 0 | Run Id: eval_run | Seed: 7 | Stages: ['evaluate'] | World Size: 2
+2026-03-20 15:14:42 INFO Device | Resolved Device: cpu
+2026-03-20 15:14:42 INFO Data Ready | Test: 0 | Train: 0 | Valid: 0
+2026-03-20 15:14:42 INFO DDP Ready | Wrapped: True
+2026-03-20 15:14:42 INFO Begin Evaluation
+2026-03-20 15:14:42 INFO End Evaluation

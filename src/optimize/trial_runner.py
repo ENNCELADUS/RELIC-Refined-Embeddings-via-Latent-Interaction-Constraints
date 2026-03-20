@@ -6,6 +6,7 @@ import csv
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from src.optimize.search_space import SearchParameter, apply_search_parameters
 from src.utils.config import (
@@ -19,7 +20,7 @@ from src.utils.config import (
 
 Direction = str
 RunPipelineFn = Callable[[ConfigDict], None]
-ALLOWED_STAGES: tuple[str, ...] = ("train", "evaluate")
+ALLOWED_STAGES: tuple[str, ...] = ("train", "evaluate", "topology_evaluate")
 STAGE_ORDER: dict[str, int] = {stage: index for index, stage in enumerate(ALLOWED_STAGES)}
 TRAINING_STAGES: tuple[str, ...] = ("train",)
 
@@ -42,7 +43,7 @@ def execute_trial(
     base_config: ConfigDict,
     search_space: list[SearchParameter],
     sampled_values: Mapping[str, object],
-    study_name: str,
+    run_id_prefix: str,
     trial_number: int,
     objective_metric: str,
     direction: Direction,
@@ -55,7 +56,7 @@ def execute_trial(
         base_config: Baseline root config.
         search_space: Parsed search-space definitions.
         sampled_values: Sampled search values for this trial.
-        study_name: Optimization study name.
+        run_id_prefix: Timestamp-based optimization run prefix.
         trial_number: Zero-based trial index.
         objective_metric: Objective metric (``val_auprc`` or ``auprc``).
         direction: Optimization direction.
@@ -70,7 +71,10 @@ def execute_trial(
         sampled_values=sampled_values,
         search_space=search_space,
     )
-    trial_base_run_id = build_trial_run_id(study_name=study_name, trial_number=trial_number)
+    trial_base_run_id = build_trial_run_id(
+        run_id_prefix=run_id_prefix,
+        trial_number=trial_number,
+    )
     _patch_trial_runtime_config(
         config=trial_config,
         execution_cfg=execution_cfg,
@@ -110,7 +114,7 @@ def run_best_full_pipeline(
     base_config: ConfigDict,
     search_space: list[SearchParameter],
     best_values: Mapping[str, object],
-    study_name: str,
+    run_id_prefix: str,
     run_pipeline_fn: RunPipelineFn,
     ddp_per_trial: bool = False,
 ) -> str:
@@ -120,8 +124,9 @@ def run_best_full_pipeline(
         base_config: Baseline root config.
         search_space: Parsed search-space definitions.
         best_values: Best sampled values from the search.
-        study_name: Study name for deterministic run IDs.
+        run_id_prefix: Timestamp-based optimization run prefix.
         run_pipeline_fn: Callable that executes the pipeline.
+        ddp_per_trial: Whether to preserve DDP for the final best-parameter run.
 
     Returns:
         Train run ID used for the final staged pipeline run.
@@ -132,9 +137,11 @@ def run_best_full_pipeline(
         search_space=search_space,
     )
     run_cfg = get_section(final_config, "run_config")
-    run_cfg["stages"] = ["train", "evaluate"]
-    run_cfg["train_run_id"] = f"opt_{study_name}_best_train"
-    run_cfg["eval_run_id"] = f"opt_{study_name}_best_eval"
+    run_cfg["stages"] = list(_final_stages_for_best_pipeline(run_cfg))
+    run_cfg["train_run_id"] = f"{run_id_prefix}_best_train"
+    run_cfg["eval_run_id"] = f"{run_id_prefix}_best_eval"
+    if "topology_evaluate" in cast(list[str], run_cfg["stages"]):
+        run_cfg["topology_eval_run_id"] = f"{run_id_prefix}_best_topology"
 
     if not ddp_per_trial:
         device_cfg = get_section(final_config, "device_config")
@@ -143,12 +150,9 @@ def run_best_full_pipeline(
     return as_str(run_cfg["train_run_id"], "run_config.train_run_id")
 
 
-def build_trial_run_id(*, study_name: str, trial_number: int) -> str:
+def build_trial_run_id(*, run_id_prefix: str, trial_number: int) -> str:
     """Build deterministic trial run ID."""
-    safe_study = "".join(
-        char if char.isalnum() or char in {"-", "_"} else "_" for char in study_name
-    )
-    return f"opt_{safe_study}_t{trial_number:04d}"
+    return f"{run_id_prefix}_t{trial_number:04d}"
 
 
 def read_objective_history(*, csv_path: Path, objective_metric: str) -> tuple[list[float], str]:
@@ -260,9 +264,24 @@ def _parse_trial_stages(execution_cfg: Mapping[str, object]) -> tuple[str, ...]:
     for stage in stages:
         stage_order = STAGE_ORDER[stage]
         if stage_order < previous_order:
-            raise ValueError("optimization.execution.trial_stages must follow: train -> evaluate")
+            raise ValueError(
+                "optimization.execution.trial_stages must follow: "
+                "train -> evaluate -> topology_evaluate"
+            )
         previous_order = stage_order
     return stages
+
+
+def _final_stages_for_best_pipeline(run_cfg: ConfigDict) -> tuple[str, ...]:
+    """Return final best-pipeline stages, preserving optional topology evaluation."""
+    raw_stages = run_cfg.get("stages", ["train", "evaluate"])
+    configured_stages = tuple(
+        stage.lower() for stage in as_str_list(raw_stages, "run_config.stages")
+    )
+    final_stages = ["train", "evaluate"]
+    if "topology_evaluate" in configured_stages:
+        final_stages.append("topology_evaluate")
+    return tuple(final_stages)
 
 
 def _objective_training_stage(run_cfg: ConfigDict) -> str:

@@ -10,8 +10,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Protocol, cast
 
-from src.optimize.search_space import SearchParameter, sample_parameter
 from src.optimize.distributed import OptimizationChannel, OptimizationCommand
+from src.optimize.search_space import SearchParameter, sample_parameter
 from src.optimize.trial_runner import Direction, RunPipelineFn, TrialExecutionResult, execute_trial
 from src.utils.config import ConfigDict, as_bool, as_float, as_int, as_str
 
@@ -71,6 +71,7 @@ def run_optuna_optimization(
     base_config: ConfigDict,
     optimization_cfg: ConfigDict,
     search_space: list[SearchParameter],
+    run_id_prefix: str,
     run_pipeline_fn: RunPipelineFn,
     optuna_module: ModuleType | None = None,
     distributed_channel: OptimizationChannel | None = None,
@@ -81,8 +82,10 @@ def run_optuna_optimization(
         base_config: Root config template.
         optimization_cfg: ``optimization`` section mapping.
         search_space: Parsed search parameters.
+        run_id_prefix: Timestamp-based optimization run prefix.
         run_pipeline_fn: Pipeline executor callable.
         optuna_module: Optional injected Optuna module for tests.
+        distributed_channel: Optional coordination channel for worker ranks.
 
     Returns:
         Study result summary.
@@ -144,7 +147,7 @@ def run_optuna_optimization(
                 base_config=base_config,
                 search_space=search_space,
                 sampled_values=sampled_values,
-                study_name=study_name,
+                run_id_prefix=run_id_prefix,
                 trial_number=trial_number,
                 objective_metric=objective_metric,
                 direction=direction,

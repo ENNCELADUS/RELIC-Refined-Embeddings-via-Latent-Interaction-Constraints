@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol, cast
+from typing import Protocol
 
 from src.optimize.search_space import SearchParameter
 from src.optimize.trial_runner import (
     Direction,
     RunPipelineFn,
+    TrialExecutionResult,
     execute_trial,
     run_best_full_pipeline,
 )
 from src.utils.config import ConfigDict
-from src.utils.distributed import DistributedContext, distributed_barrier, dist
+from src.utils.distributed import DistributedContext, dist, distributed_barrier
+
+ExecuteTrialFn = Callable[..., TrialExecutionResult | None]
+RunBestPipelineFn = Callable[..., str]
 
 
 @dataclass(frozen=True)
@@ -69,13 +74,14 @@ def run_distributed_worker_loop(
     base_config: ConfigDict,
     search_space: list[SearchParameter],
     study_name: str,
+    run_id_prefix: str,
     objective_metric: str,
     direction: Direction,
     execution_cfg: ConfigDict,
     run_pipeline_fn: RunPipelineFn,
     channel: OptimizationChannel,
-    execute_trial_fn=execute_trial,
-    run_best_full_pipeline_fn=run_best_full_pipeline,
+    execute_trial_fn: ExecuteTrialFn = execute_trial,
+    run_best_full_pipeline_fn: RunBestPipelineFn = run_best_full_pipeline,
 ) -> None:
     """Run worker-rank loop for distributed HPO coordination."""
     while True:
@@ -89,7 +95,7 @@ def run_distributed_worker_loop(
                 base_config=base_config,
                 search_space=search_space,
                 sampled_values=command.sampled_values,
-                study_name=study_name,
+                run_id_prefix=run_id_prefix,
                 trial_number=command.trial_number,
                 objective_metric=objective_metric,
                 direction=direction,
@@ -103,7 +109,7 @@ def run_distributed_worker_loop(
                 base_config=base_config,
                 search_space=search_space,
                 best_values=command.best_values,
-                study_name=study_name,
+                run_id_prefix=run_id_prefix,
                 run_pipeline_fn=run_pipeline_fn,
                 ddp_per_trial=True,
             )

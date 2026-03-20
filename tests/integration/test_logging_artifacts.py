@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 import src.run as run_module
+import src.run.stage_evaluate as stage_evaluate_module
 import torch
 from src.utils.config import ConfigDict
 from src.utils.distributed import DistributedContext
@@ -248,3 +249,67 @@ def test_evaluation_uses_best_f1_threshold_from_validation_and_logs_it(
     csv_lines = eval_csv.read_text(encoding="utf-8").splitlines()
     assert len(csv_lines) == 2
     assert metrics["recall"] >= 0.5
+
+
+def test_evaluation_worker_rank_skips_threshold_search_and_test_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _GuardEvaluator:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        def select_best_f1_threshold(self, **kwargs: object) -> float:
+            del kwargs
+            raise AssertionError("worker ranks must skip validation threshold search")
+
+        def evaluate(self, **kwargs: object) -> dict[str, float]:
+            del kwargs
+            raise AssertionError("worker ranks must skip test-set inference")
+
+    barrier_calls: list[int] = []
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        config = _base_config(stages=["evaluate"])
+        evaluate_cfg = config["evaluate"]
+        assert isinstance(evaluate_cfg, dict)
+        evaluate_cfg["decision_threshold"] = {"mode": "best_f1_on_valid"}
+
+        model = _TinyModel()
+        checkpoint_path = tmp_path / "artifacts" / "worker_eval_checkpoint.pth"
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), checkpoint_path)
+
+        monkeypatch.setattr(stage_evaluate_module, "Evaluator", _GuardEvaluator)
+        monkeypatch.setattr(
+            stage_evaluate_module,
+            "distributed_barrier",
+            lambda context: barrier_calls.append(context.rank),
+        )
+
+        metrics = stage_evaluate_module.run_evaluation_stage(
+            config=config,
+            model=model,
+            device=torch.device("cpu"),
+            dataloaders=cast(dict[str, DataLoader[dict[str, object]]], _fake_dataloaders()),
+            run_id="worker_eval_case",
+            checkpoint_path=checkpoint_path,
+            distributed_context=DistributedContext(
+                ddp_enabled=True,
+                is_distributed=True,
+                rank=1,
+                local_rank=1,
+                world_size=4,
+                owns_process_group=False,
+            ),
+        )
+    finally:
+        os.chdir(previous_cwd)
+
+    eval_dir = tmp_path / "logs" / "v3" / "evaluate" / "worker_eval_case"
+    assert metrics == {}
+    assert barrier_calls == [1]
+    assert eval_dir.exists()
+    assert not (eval_dir / "evaluate.csv").exists()
+    assert not (eval_dir / "log.log").exists()

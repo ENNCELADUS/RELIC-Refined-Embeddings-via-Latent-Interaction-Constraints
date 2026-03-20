@@ -266,6 +266,11 @@ def test_run_optimization_writes_trials_and_best_params(
     config = _base_config()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
+        optimize_run,
+        "generate_run_id",
+        lambda existing_value=None: "20260320_110811",
+    )
+    monkeypatch.setattr(
         "src.optimize.backends.optuna_backend._import_optuna",
         lambda: _FakeOptunaModule(),
     )
@@ -284,6 +289,9 @@ def test_run_optimization_writes_trials_and_best_params(
     with (output_dir / "trials.csv").open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 3
+    assert rows[0]["run_id"] == "20260320_110811_t0000"
+    assert rows[1]["run_id"] == "20260320_110811_t0001"
+    assert rows[2]["run_id"] == "20260320_110811_t0002"
 
 
 def test_optuna_backend_marks_pruned_trials(tmp_path: Path) -> None:
@@ -295,6 +303,7 @@ def test_optuna_backend_marks_pruned_trials(tmp_path: Path) -> None:
         base_config=config,
         optimization_cfg=optimization_cfg,
         search_space=search_space,
+        run_id_prefix="20260320_110811",
         run_pipeline_fn=_fake_execute_pipeline,
         optuna_module=cast(ModuleType, _FakeOptunaModule(prune_steps={1: 1})),
     )
@@ -380,6 +389,7 @@ def test_optuna_backend_broadcasts_trial_commands_in_distributed_mode(tmp_path: 
             base_config=config,
             optimization_cfg=optimization_cfg,
             search_space=search_space,
+            run_id_prefix="20260320_110811",
             run_pipeline_fn=_fake_execute_pipeline,
             optuna_module=cast(ModuleType, _FakeOptunaModule()),
             distributed_channel=channel,

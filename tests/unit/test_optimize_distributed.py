@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 from src.optimize.search_space import SearchParameter
@@ -33,11 +33,13 @@ def test_worker_loop_executes_trial_and_best_pipeline_commands() -> None:
                 dict(kwargs["sampled_values"]),
             )
         )
+        assert kwargs["run_id_prefix"] == "20260320_110811"
         return None
 
     def fake_run_best_full_pipeline(**kwargs: object) -> str:
         observed_best.append(dict(kwargs["best_values"]))
-        return "opt_v3_hpo_best_train"
+        assert kwargs["run_id_prefix"] == "20260320_110811"
+        return "20260320_110811_best_train"
 
     channel = _RecordingChannel(
         commands=[
@@ -66,6 +68,7 @@ def test_worker_loop_executes_trial_and_best_pipeline_commands() -> None:
             )
         ],
         study_name="v3_hpo",
+        run_id_prefix="20260320_110811",
         objective_metric="val_auprc",
         direction="maximize",
         execution_cfg={"trial_stages": ["train"], "ddp_per_trial": True},
@@ -107,7 +110,10 @@ def test_torch_distributed_channel_send_receive_and_barrier(
         else:
             observed["sent_kind"] = command.kind
 
-    monkeypatch.setattr("src.optimize.distributed.dist.broadcast_object_list", fake_broadcast_object_list)
+    monkeypatch.setattr(
+        "src.optimize.distributed.dist.broadcast_object_list",
+        fake_broadcast_object_list,
+    )
     monkeypatch.setattr(
         "src.optimize.distributed.distributed_barrier",
         lambda distributed_context: observed.setdefault("barrier_rank", distributed_context.rank),

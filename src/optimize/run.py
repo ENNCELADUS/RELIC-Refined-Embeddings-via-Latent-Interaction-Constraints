@@ -24,7 +24,8 @@ from src.optimize.distributed import (
 from src.optimize.search_space import extend_with_nas_lite, parse_search_space
 from src.optimize.trial_runner import run_best_full_pipeline
 from src.utils.config import ConfigDict, as_bool, as_int, as_str, load_config
-from src.utils.distributed import cleanup_distributed, initialize_distributed
+from src.utils.distributed import DistributedContext, cleanup_distributed, initialize_distributed
+from src.utils.logging import generate_run_id
 
 LOGGER = logging.getLogger(__name__)
 PipelineExecuteFn = Callable[[ConfigDict], None]
@@ -85,6 +86,7 @@ def run_optimization(
         raise ValueError("optimization.backend must be 'optuna'")
 
     study_name = as_str(optimization_cfg.get("study_name", "relic_hpo"), "optimization.study_name")
+    run_id_prefix = _resolve_optimization_run_id_prefix(optimization_cfg)
     output_dir = Path("artifacts") / "hpo" / study_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,6 +103,7 @@ def run_optimization(
                 base_config=config,
                 search_space=search_space,
                 study_name=study_name,
+                run_id_prefix=run_id_prefix,
                 objective_metric=as_str(
                     optimization_cfg.get("objective_metric", "val_auprc"),
                     "optimization.objective_metric",
@@ -118,6 +121,7 @@ def run_optimization(
             base_config=config,
             optimization_cfg=optimization_cfg,
             search_space=search_space,
+            run_id_prefix=run_id_prefix,
             run_pipeline_fn=PIPELINE_EXECUTE_FN,
             distributed_channel=distributed_channel,
         )
@@ -134,7 +138,7 @@ def run_optimization(
                 base_config=config,
                 search_space=search_space,
                 best_values=result.best_params,
-                study_name=result.study_name,
+                run_id_prefix=run_id_prefix,
                 run_pipeline_fn=PIPELINE_EXECUTE_FN,
                 ddp_per_trial=distributed_context.is_distributed,
             )
@@ -171,7 +175,15 @@ def _resolve_optimization_config(config: ConfigDict) -> ConfigDict:
     return optimization_cfg
 
 
-def _initialize_optimization_distributed(*, execution_cfg: ConfigDict):
+def _resolve_optimization_run_id_prefix(optimization_cfg: ConfigDict) -> str:
+    """Resolve timestamp-based run-id prefix for one optimization session."""
+    configured_prefix = optimization_cfg.get("run_id_prefix")
+    if isinstance(configured_prefix, str) and configured_prefix.strip():
+        return configured_prefix.strip()
+    return generate_run_id(None)
+
+
+def _initialize_optimization_distributed(*, execution_cfg: ConfigDict) -> DistributedContext:
     """Initialize one shared process group for distributed optimization sessions."""
     world_size = as_int(os.environ.get("WORLD_SIZE", "1"), "WORLD_SIZE")
     ddp_per_trial = as_bool(

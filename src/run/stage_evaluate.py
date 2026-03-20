@@ -105,6 +105,9 @@ def run_evaluation_stage(
     if distributed_context.is_main_process:
         log_stage_event(logger, "checkpoint_loaded", path=checkpoint_path_resolved)
     model.eval()
+    if distributed_context.is_distributed and not distributed_context.is_main_process:
+        distributed_barrier(distributed_context)
+        return {}
     eval_cfg = get_section(config, "evaluate")
     training_cfg = get_section(config, "training_config")
     configured_metrics = _metrics_from_config(eval_cfg)
