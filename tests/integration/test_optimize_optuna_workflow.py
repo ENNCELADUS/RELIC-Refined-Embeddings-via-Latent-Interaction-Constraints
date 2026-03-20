@@ -10,6 +10,7 @@ from types import ModuleType
 from typing import cast
 
 import pytest
+import src.optimize.backends.optuna_backend as optuna_backend_module
 import src.optimize.run as optimize_run
 from src.optimize.backends.optuna_backend import run_optuna_optimization
 from src.optimize.distributed import OptimizationCommand
@@ -79,6 +80,10 @@ class _FakeStudy:
         self.trials: list[_FakeFrozenTrial] = []
         self.best_value: float = float("-inf") if direction == "maximize" else float("inf")
         self.best_params: dict[str, object] = {}
+        self.user_attrs: dict[str, object] = {}
+
+    def set_user_attr(self, key: str, value: object) -> None:
+        self.user_attrs[key] = value
 
     def optimize(self, objective: Callable[[object], float], n_trials: int, timeout: int) -> None:
         del timeout
@@ -135,6 +140,7 @@ class _FakeOptunaModule:
 
     def __init__(self, prune_steps: dict[int, int] | None = None) -> None:
         self._prune_steps = {} if prune_steps is None else dict(prune_steps)
+        self._studies: dict[str, _FakeStudy] = {}
 
     def create_study(
         self,
@@ -146,8 +152,15 @@ class _FakeOptunaModule:
         storage: str | None,
         load_if_exists: bool,
     ) -> _FakeStudy:
-        del study_name, sampler, pruner, storage, load_if_exists
-        return _FakeStudy(direction=direction, prune_steps=self._prune_steps)
+        del sampler, pruner, storage
+        existing_study = self._studies.get(study_name)
+        if existing_study is not None and load_if_exists:
+            return existing_study
+        if existing_study is not None:
+            raise ValueError(f"Study already exists: {study_name}")
+        study = _FakeStudy(direction=direction, prune_steps=self._prune_steps)
+        self._studies[study_name] = study
+        return study
 
 
 def _base_config() -> ConfigDict:
@@ -271,7 +284,8 @@ def test_run_optimization_writes_trials_and_best_params(
         lambda existing_value=None: "20260320_110811",
     )
     monkeypatch.setattr(
-        "src.optimize.backends.optuna_backend._import_optuna",
+        optuna_backend_module,
+        "_import_optuna",
         lambda: _FakeOptunaModule(),
     )
     monkeypatch.setattr(optimize_run, "PIPELINE_EXECUTE_FN", _fake_execute_pipeline)
@@ -313,6 +327,42 @@ def test_optuna_backend_marks_pruned_trials(tmp_path: Path) -> None:
     assert "COMPLETE" in states
 
 
+def test_optuna_backend_uses_fresh_study_when_existing_legacy_study_is_incompatible() -> None:
+    config = _base_config()
+    optimization_cfg = cast(ConfigDict, config["optimization"])
+    search_space = parse_search_space(optimization_cfg["search_space"])
+    fake_optuna = _FakeOptunaModule()
+    legacy_study = fake_optuna.create_study(
+        study_name="unit_opt",
+        direction="maximize",
+        sampler=object(),
+        pruner=object(),
+        storage=None,
+        load_if_exists=True,
+    )
+    legacy_study.trials.append(
+        _FakeFrozenTrial(
+            number=0,
+            state=_FakeState("COMPLETE"),
+            value=0.5,
+            params={"optimizer_lr": 5.0e-4, "d_model": 128},
+            user_attrs={},
+        )
+    )
+
+    result = run_optuna_optimization(
+        base_config=config,
+        optimization_cfg=optimization_cfg,
+        search_space=search_space,
+        run_id_prefix="20260320_152312",
+        run_pipeline_fn=_fake_execute_pipeline,
+        optuna_module=cast(ModuleType, fake_optuna),
+    )
+
+    assert result.study_name == "unit_opt__20260320_152312"
+    assert "search_space_signature" in fake_optuna._studies[result.study_name].user_attrs
+
+
 def test_nas_lite_parameters_are_applied_in_trials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -342,7 +392,8 @@ def test_nas_lite_parameters_are_applied_in_trials(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "src.optimize.backends.optuna_backend._import_optuna",
+        optuna_backend_module,
+        "_import_optuna",
         lambda: _FakeOptunaModule(),
     )
     monkeypatch.setattr(optimize_run, "PIPELINE_EXECUTE_FN", _recording_pipeline)

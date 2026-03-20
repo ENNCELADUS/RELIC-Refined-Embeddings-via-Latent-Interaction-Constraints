@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from src.optimize.trial_runner import Direction, RunPipelineFn, TrialExecutionRe
 from src.utils.config import ConfigDict, as_bool, as_float, as_int, as_str
 
 LOGGER = logging.getLogger(__name__)
+SEARCH_SPACE_SIGNATURE_ATTR = "search_space_signature"
+CONFIGURED_STUDY_NAME_ATTR = "configured_study_name"
 
 
 class _TrialProtocol(Protocol):
@@ -41,6 +44,16 @@ class _FrozenTrialProtocol(Protocol):
     value: float | None
     params: Mapping[str, object]
     user_attrs: Mapping[str, object]
+
+
+class _StudyProtocol(Protocol):
+    """Protocol for Optuna-like study object."""
+
+    trials: Sequence[object]
+    user_attrs: Mapping[str, object]
+
+    def set_user_attr(self, key: str, value: object) -> None:
+        """Set study-level user attr."""
 
 
 @dataclass(frozen=True)
@@ -116,13 +129,24 @@ def run_optuna_optimization(
     pruner = _build_pruner(optuna, pruner_cfg)
     storage_url = _resolve_storage_url(storage_cfg=storage_cfg)
 
-    study = optuna.create_study(
+    initial_study = optuna.create_study(
         study_name=study_name,
         direction=direction,
         sampler=sampler,
         pruner=pruner,
         storage=storage_url,
         load_if_exists=True,
+    )
+    study, resolved_study_name = _resolve_compatible_study(
+        optuna=optuna,
+        study=cast(_StudyProtocol, initial_study),
+        configured_study_name=study_name,
+        direction=direction,
+        sampler=sampler,
+        pruner=pruner,
+        storage_url=storage_url,
+        search_space=search_space,
+        run_id_prefix=run_id_prefix,
     )
 
     catch_oom_as_pruned = as_bool(
@@ -171,7 +195,7 @@ def run_optuna_optimization(
 
     trial_records = tuple(_collect_trial_records(study_trials=study.trials))
     return OptunaResult(
-        study_name=study_name,
+        study_name=resolved_study_name,
         direction=direction,
         objective_metric=objective_metric,
         best_value=float(study.best_value),
@@ -240,6 +264,94 @@ def _resolve_storage_url(*, storage_cfg: ConfigDict) -> str | None:
         sqlite_path = Path(storage_url[len("sqlite:///") :])
         sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     return storage_url
+
+
+def _resolve_compatible_study(
+    *,
+    optuna: ModuleType,
+    study: _StudyProtocol,
+    configured_study_name: str,
+    direction: str,
+    sampler: object,
+    pruner: object,
+    storage_url: str | None,
+    search_space: Sequence[SearchParameter],
+    run_id_prefix: str,
+) -> tuple[_StudyProtocol, str]:
+    """Return a study whose stored search-space contract matches the current run."""
+    signature = _search_space_signature(search_space)
+    stored_signature_raw = study.user_attrs.get(SEARCH_SPACE_SIGNATURE_ATTR)
+    stored_signature = stored_signature_raw if isinstance(stored_signature_raw, str) else None
+    has_trials = len(study.trials) > 0
+
+    if not has_trials or stored_signature == signature:
+        _annotate_study_metadata(
+            study=study,
+            configured_study_name=configured_study_name,
+            search_space_signature=signature,
+        )
+        return study, configured_study_name
+
+    derived_study_name = _derived_study_name(
+        configured_study_name=configured_study_name,
+        run_id_prefix=run_id_prefix,
+    )
+    LOGGER.warning(
+        "Study '%s' is incompatible with the current search space; creating '%s' instead.",
+        configured_study_name,
+        derived_study_name,
+    )
+    derived_study = cast(
+        _StudyProtocol,
+        optuna.create_study(
+            study_name=derived_study_name,
+            direction=direction,
+            sampler=sampler,
+            pruner=pruner,
+            storage=storage_url,
+            load_if_exists=False,
+        ),
+    )
+    _annotate_study_metadata(
+        study=derived_study,
+        configured_study_name=configured_study_name,
+        search_space_signature=signature,
+    )
+    return derived_study, derived_study_name
+
+
+def _annotate_study_metadata(
+    *,
+    study: _StudyProtocol,
+    configured_study_name: str,
+    search_space_signature: str,
+) -> None:
+    """Persist study metadata used for compatibility checks across reruns."""
+    study.set_user_attr(SEARCH_SPACE_SIGNATURE_ATTR, search_space_signature)
+    study.set_user_attr(CONFIGURED_STUDY_NAME_ATTR, configured_study_name)
+
+
+def _derived_study_name(*, configured_study_name: str, run_id_prefix: str) -> str:
+    """Build a deterministic fresh study name for incompatible reruns."""
+    return f"{configured_study_name}__{run_id_prefix}"
+
+
+def _search_space_signature(search_space: Sequence[SearchParameter]) -> str:
+    """Serialize search-space definitions into a stable compatibility signature."""
+    serializable_items = [
+        {
+            "name": parameter.name,
+            "path": parameter.path,
+            "parameter_type": parameter.parameter_type,
+            "low": parameter.low,
+            "high": parameter.high,
+            "step": parameter.step,
+            "log": parameter.log,
+            "choices": list(parameter.choices),
+        }
+        for parameter in search_space
+    ]
+    return json.dumps(serializable_items, sort_keys=True, separators=(",", ":"))
 
 
 def _sample_trial_values(

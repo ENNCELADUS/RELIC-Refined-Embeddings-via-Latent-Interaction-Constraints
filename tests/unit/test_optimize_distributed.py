@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+import src.optimize.distributed as optimize_distributed_module
 from src.optimize.search_space import SearchParameter
 
 
@@ -111,11 +112,13 @@ def test_torch_distributed_channel_send_receive_and_barrier(
             observed["sent_kind"] = command.kind
 
     monkeypatch.setattr(
-        "src.optimize.distributed.dist.broadcast_object_list",
+        optimize_distributed_module.dist,
+        "broadcast_object_list",
         fake_broadcast_object_list,
     )
     monkeypatch.setattr(
-        "src.optimize.distributed.distributed_barrier",
+        optimize_distributed_module,
+        "distributed_barrier",
         lambda distributed_context: observed.setdefault("barrier_rank", distributed_context.rank),
     )
 
