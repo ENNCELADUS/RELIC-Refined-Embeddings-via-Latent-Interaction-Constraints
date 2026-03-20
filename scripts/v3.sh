@@ -7,6 +7,10 @@
 #SBATCH --mem=300G
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:NVIDIAL40:4
+#SBATCH --output=logs/v3/slurm_%j.out
+#SBATCH --error=logs/v3/slurm_%j.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=2162352828@qq.com
 
 set -euo pipefail
 
