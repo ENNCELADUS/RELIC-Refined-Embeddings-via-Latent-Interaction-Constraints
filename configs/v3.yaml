@@ -82,6 +82,8 @@ training_config:
     label_smoothing: 0.0
   strategy:
     type: "none"
+  domain_adaptation:
+    enabled: false
 
 evaluate:
   decision_threshold:

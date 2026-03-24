@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import torch
@@ -21,7 +21,6 @@ from src.adapt import (
     compute_centroids,
     diversity_loss,
     entropy_loss,
-    freeze_parameters_by_prefix,
     logits_to_probabilities,
     parse_domain_adaptation_config,
     pseudo_label_loss,
@@ -183,11 +182,51 @@ def _build_target_loaders(
     return eval_loader, train_loader
 
 
-def _build_optimizer(model: nn.Module, adaptation_config: DomainAdaptationConfig) -> Optimizer:
-    """Build SHOT SGD optimizer for currently trainable parameters."""
-    params = [parameter for parameter in model.parameters() if parameter.requires_grad]
+def _prepare_shot_optimizer_params(
+    model: nn.Module,
+    prefixes: Sequence[str],
+    *,
+    preserve_frozen_requires_grad: bool,
+) -> tuple[list[nn.Parameter], int]:
+    """Return optimizer parameters for SHOT while honoring frozen prefixes.
+
+    Under DDP, changing ``requires_grad`` after wrapping can break reducer bucket
+    bookkeeping. In that case we exclude frozen-prefix parameters from the
+    optimizer but preserve their original ``requires_grad`` setting.
+    """
+    normalized_prefixes = tuple(prefixes)
+    if not normalized_prefixes:
+        raise ValueError("freeze prefixes must not be empty")
+
+    def _matches(name: str) -> bool:
+        return any(
+            name.startswith(prefix) or name.startswith(f"module.{prefix}")
+            for prefix in normalized_prefixes
+        )
+
+    optimizer_params: list[nn.Parameter] = []
+    trainable_count = 0
+    for name, parameter in model.named_parameters():
+        if _matches(name):
+            if not preserve_frozen_requires_grad:
+                parameter.requires_grad = False
+            continue
+        parameter.requires_grad = True
+        optimizer_params.append(parameter)
+        trainable_count += int(parameter.numel())
+
+    if trainable_count <= 0:
+        raise ValueError("SHOT produced zero trainable parameters after applying freeze_prefixes")
+    return optimizer_params, trainable_count
+
+
+def _build_optimizer(
+    params: Sequence[nn.Parameter],
+    adaptation_config: DomainAdaptationConfig,
+) -> Optimizer:
+    """Build SHOT SGD optimizer for the selected trainable parameters."""
     return torch.optim.SGD(
-        params=params,
+        params=list(params),
         lr=adaptation_config.optimizer.lr,
         momentum=adaptation_config.optimizer.momentum,
         weight_decay=adaptation_config.optimizer.weight_decay,
@@ -349,7 +388,7 @@ def _train_one_shot_epoch(
         prepared_batch = _move_batch_to_device(batch=batch, device=device)
         forward_batch = _forward_batch_without_labels(prepared_batch)
 
-        optimizer.zero_grad(set_to_none=True)
+        model.zero_grad(set_to_none=True)
         with torch.autocast(device_type=device.type, enabled=use_amp):
             output = _forward_model(model=model, batch=forward_batch)
             logits = output["logits"]
@@ -439,9 +478,10 @@ def run_shot_adaptation_stage(
     if distributed_context.is_main_process:
         log_stage_event(logger, "checkpoint_loaded", path=checkpoint_path)
 
-    trainable_params = freeze_parameters_by_prefix(
+    optimizer_params, trainable_params = _prepare_shot_optimizer_params(
         model=model,
         prefixes=adaptation_config.freeze_prefixes,
+        preserve_frozen_requires_grad=distributed_context.is_distributed,
     )
 
     eval_loader, train_loader = _build_target_loaders(
@@ -456,7 +496,7 @@ def run_shot_adaptation_stage(
             "SHOT train loader has zero steps; increase target data or reduce batch size"
         )
 
-    optimizer = _build_optimizer(model=model, adaptation_config=adaptation_config)
+    optimizer = _build_optimizer(params=optimizer_params, adaptation_config=adaptation_config)
     scheduler = _build_scheduler(
         optimizer=optimizer,
         adaptation_config=adaptation_config,

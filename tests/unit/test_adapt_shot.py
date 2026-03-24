@@ -243,6 +243,55 @@ class _TinyDataset(Dataset[dict[str, torch.Tensor]]):
         }
 
 
+class _TinyShotModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.encoder = nn.Linear(4, 4)
+        self.output_head = nn.Sequential(
+            nn.Linear(4, 4),
+            nn.ReLU(),
+            nn.Linear(4, 1),
+        )
+
+
+def test_prepare_shot_optimizer_params_preserves_frozen_requires_grad_for_ddp() -> None:
+    model = _TinyShotModel()
+
+    optimizer_params, trainable_count = stage_adapt_module._prepare_shot_optimizer_params(
+        model=model,
+        prefixes=("output_head",),
+        preserve_frozen_requires_grad=True,
+    )
+
+    optimizer_param_ids = {id(parameter) for parameter in optimizer_params}
+    encoder_param_ids = {id(parameter) for parameter in model.encoder.parameters()}
+    output_head_param_ids = {id(parameter) for parameter in model.output_head.parameters()}
+
+    assert trainable_count == sum(parameter.numel() for parameter in model.encoder.parameters())
+    assert optimizer_param_ids == encoder_param_ids
+    assert optimizer_param_ids.isdisjoint(output_head_param_ids)
+    assert all(parameter.requires_grad for parameter in model.output_head.parameters())
+
+
+def test_prepare_shot_optimizer_params_freezes_prefixes_without_ddp() -> None:
+    model = _TinyShotModel()
+
+    optimizer_params, trainable_count = stage_adapt_module._prepare_shot_optimizer_params(
+        model=model,
+        prefixes=("output_head",),
+        preserve_frozen_requires_grad=False,
+    )
+
+    optimizer_param_ids = {id(parameter) for parameter in optimizer_params}
+    encoder_param_ids = {id(parameter) for parameter in model.encoder.parameters()}
+    output_head_param_ids = {id(parameter) for parameter in model.output_head.parameters()}
+
+    assert trainable_count == sum(parameter.numel() for parameter in model.encoder.parameters())
+    assert optimizer_param_ids == encoder_param_ids
+    assert optimizer_param_ids.isdisjoint(output_head_param_ids)
+    assert all(not parameter.requires_grad for parameter in model.output_head.parameters())
+
+
 def test_build_target_loaders_uses_distributed_sampler_when_ddp_enabled() -> None:
     config: dict[str, object] = {
         "training_config": {
