@@ -360,7 +360,12 @@ def run_training_stage(
         training_cfg.get("monitor_metric", "auprc"), "training_config.monitor_metric"
     ).lower()
     evaluator_metrics = sorted(set(validation_metrics + [monitor_metric]))
-    evaluator = Evaluator(metrics=evaluator_metrics, loss_config=loss_config)
+    device_cfg = get_section(config, "device_config")
+    use_amp = device.type == "cuda" and as_bool(
+        device_cfg.get("use_mixed_precision", False),
+        "device_config.use_mixed_precision",
+    )
+    evaluator = Evaluator(metrics=evaluator_metrics, loss_config=loss_config, use_amp=use_amp)
     monitor_key = f"val_{monitor_metric}"
     patience = as_int(
         training_cfg.get("early_stopping_patience", 5),

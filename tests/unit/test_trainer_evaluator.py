@@ -136,6 +136,20 @@ class SequenceAwareModel(nn.Module):
         return {"logits": logits.unsqueeze(-1)}
 
 
+class GradModeProbeModel(nn.Module):
+    """Probe model that records gradient mode during evaluator forwards."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.grad_enabled_states: list[bool] = []
+
+    def forward(self, x: torch.Tensor, label: torch.Tensor) -> dict[str, torch.Tensor]:
+        del label
+        self.grad_enabled_states.append(torch.is_grad_enabled())
+        logits = x.sum(dim=1, keepdim=True)
+        return {"logits": logits}
+
+
 def test_trainer_runs_single_epoch() -> None:
     model = TinyModel()
     loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)
@@ -453,3 +467,22 @@ def test_best_f1_threshold_prefers_validation_optimum() -> None:
     threshold = Evaluator.best_f1_threshold(labels=labels, probabilities=probabilities)
 
     assert threshold == pytest.approx(0.45)
+
+
+def test_select_best_f1_threshold_disables_grad_tracking() -> None:
+    model = GradModeProbeModel()
+    loader = DataLoader(TinyDataset(), batch_size=2, shuffle=False, collate_fn=_collate)
+    evaluator = Evaluator(
+        metrics=["f1"],
+        loss_config=LossConfig(loss_type="bce_with_logits", pos_weight=1.0, label_smoothing=0.0),
+    )
+
+    threshold = evaluator.select_best_f1_threshold(
+        model=model,
+        data_loader=loader,
+        device=torch.device("cpu"),
+    )
+
+    assert 0.0 <= threshold <= 1.0
+    assert model.grad_enabled_states
+    assert model.grad_enabled_states == [False, False]

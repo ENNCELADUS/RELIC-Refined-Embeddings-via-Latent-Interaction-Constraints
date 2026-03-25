@@ -11,6 +11,7 @@ from src.evaluate import Evaluator
 from src.run.stage_train import _build_loss_config, _build_stage_runtime, _load_checkpoint
 from src.utils.config import (
     ConfigDict,
+    as_bool,
     as_float,
     as_str,
     as_str_list,
@@ -110,10 +111,19 @@ def run_evaluation_stage(
         return {}
     eval_cfg = get_section(config, "evaluate")
     training_cfg = get_section(config, "training_config")
+    device_cfg = get_section(config, "device_config")
     configured_metrics = _metrics_from_config(eval_cfg)
     metrics_to_compute = sorted(set(configured_metrics + EVAL_CSV_COLUMNS[1:]))
     loss_config = _build_loss_config(training_cfg)
-    threshold_probe = Evaluator(metrics=metrics_to_compute, loss_config=loss_config)
+    use_amp = device.type == "cuda" and as_bool(
+        device_cfg.get("use_mixed_precision", False),
+        "device_config.use_mixed_precision",
+    )
+    threshold_probe = Evaluator(
+        metrics=metrics_to_compute,
+        loss_config=loss_config,
+        use_amp=use_amp,
+    )
     decision_threshold, threshold_mode = _resolve_decision_threshold(
         eval_cfg=eval_cfg,
         evaluator=threshold_probe,
@@ -125,6 +135,7 @@ def run_evaluation_stage(
         metrics=metrics_to_compute,
         loss_config=loss_config,
         decision_threshold=decision_threshold,
+        use_amp=use_amp,
     )
     if distributed_context.is_main_process:
         log_stage_event(

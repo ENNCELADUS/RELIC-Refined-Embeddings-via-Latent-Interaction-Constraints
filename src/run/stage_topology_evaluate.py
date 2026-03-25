@@ -323,13 +323,22 @@ def run_topology_evaluation_stage(
     topology_cfg = _topology_config(config)
     evaluate_cfg = get_section(config, "evaluate")
     training_cfg = get_section(config, "training_config")
+    device_cfg = get_section(config, "device_config")
     threshold_cfg: ConfigDict = {
         "decision_threshold": topology_cfg.get(
             "decision_threshold",
             evaluate_cfg.get("decision_threshold", 0.5),
         )
     }
-    threshold_probe = Evaluator(metrics=["f1"], loss_config=_build_loss_config(training_cfg))
+    use_amp = device.type == "cuda" and as_bool(
+        device_cfg.get("use_mixed_precision", False),
+        "device_config.use_mixed_precision",
+    )
+    threshold_probe = Evaluator(
+        metrics=["f1"],
+        loss_config=_build_loss_config(training_cfg),
+        use_amp=use_amp,
+    )
     decision_threshold, threshold_mode = _resolve_decision_threshold(
         eval_cfg=threshold_cfg,
         evaluator=threshold_probe,

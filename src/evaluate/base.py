@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 
 import torch
 from sklearn.metrics import (
@@ -56,10 +57,12 @@ class Evaluator:
         loss_config: LossConfig,
         *,
         decision_threshold: float = 0.5,
+        use_amp: bool = False,
     ) -> None:
         self.metrics = [metric.lower() for metric in metrics]
         self.loss_config = loss_config
         self.decision_threshold = self._validate_decision_threshold(decision_threshold)
+        self.use_amp = use_amp
 
     @staticmethod
     def _validate_decision_threshold(decision_threshold: float) -> float:
@@ -225,25 +228,31 @@ class Evaluator:
         all_labels: list[torch.Tensor] = []
         total_loss = 0.0
         batch_count = 0
+        autocast_context = (
+            torch.autocast(device_type=device.type, enabled=True)
+            if self.use_amp and device.type in {"cpu", "cuda"}
+            else nullcontext()
+        )
 
-        for batch in data_loader:
-            batch_count += 1
-            prepared_batch = self._move_batch_to_device(batch=batch, device=device)
-            output = self._forward_model(model=model, batch=prepared_batch)
-            logits = output["logits"]
-            labels = self._batch_tensor(prepared_batch, "label").float()
-            loss = binary_classification_loss(
-                logits=logits,
-                labels=labels,
-                loss_config=self.loss_config,
-                reduction="mean",
-            )
-            total_loss += float(loss.detach().item())
-            reduced_logits = (
-                logits.squeeze(-1) if logits.dim() > 1 and logits.size(-1) == 1 else logits
-            )
-            all_probs.append(torch.sigmoid(reduced_logits).detach().cpu())
-            all_labels.append(labels.detach().cpu())
+        with torch.inference_mode(), autocast_context:
+            for batch in data_loader:
+                batch_count += 1
+                prepared_batch = self._move_batch_to_device(batch=batch, device=device)
+                output = self._forward_model(model=model, batch=prepared_batch)
+                logits = output["logits"]
+                labels = self._batch_tensor(prepared_batch, "label").float()
+                loss = binary_classification_loss(
+                    logits=logits,
+                    labels=labels,
+                    loss_config=self.loss_config,
+                    reduction="mean",
+                )
+                total_loss += float(loss.detach().item())
+                reduced_logits = (
+                    logits.squeeze(-1) if logits.dim() > 1 and logits.size(-1) == 1 else logits
+                )
+                all_probs.append(torch.sigmoid(reduced_logits).detach().cpu())
+                all_labels.append(labels.detach().cpu())
 
         return (
             torch.cat(all_labels, dim=0).long(),

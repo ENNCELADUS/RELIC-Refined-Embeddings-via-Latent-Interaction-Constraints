@@ -313,3 +313,69 @@ def test_evaluation_worker_rank_skips_threshold_search_and_test_inference(
     assert eval_dir.exists()
     assert not (eval_dir / "evaluate.csv").exists()
     assert not (eval_dir / "log.log").exists()
+
+
+def test_run_evaluation_stage_propagates_mixed_precision_setting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    observed_use_amp: list[bool] = []
+
+    class _RecordingEvaluator:
+        def __init__(self, *args: object, use_amp: bool = False, **kwargs: object) -> None:
+            del args, kwargs
+            observed_use_amp.append(use_amp)
+
+        def select_best_f1_threshold(self, **kwargs: object) -> float:
+            del kwargs
+            return 0.5
+
+        def evaluate(self, **kwargs: object) -> dict[str, float]:
+            del kwargs
+            return {
+                "auroc": 1.0,
+                "auprc": 1.0,
+                "accuracy": 1.0,
+                "sensitivity": 1.0,
+                "specificity": 1.0,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f1": 1.0,
+                "mcc": 1.0,
+                "loss": 0.0,
+            }
+
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        config = _base_config(stages=["evaluate"])
+        device_cfg = cast(ConfigDict, config["device_config"])
+        device_cfg["use_mixed_precision"] = True
+        evaluate_cfg = cast(ConfigDict, config["evaluate"])
+        evaluate_cfg["decision_threshold"] = {"mode": "best_f1_on_valid"}
+
+        model = _TinyModel()
+        checkpoint_path = tmp_path / "artifacts" / "amp_eval_checkpoint.pth"
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), checkpoint_path)
+
+        monkeypatch.setattr(stage_evaluate_module, "Evaluator", _RecordingEvaluator)
+        monkeypatch.setattr(
+            stage_evaluate_module,
+            "_load_checkpoint",
+            lambda model, checkpoint_path, device: None,
+        )
+
+        stage_evaluate_module.run_evaluation_stage(
+            config=config,
+            model=model,
+            device=torch.device("cuda"),
+            dataloaders=cast(dict[str, DataLoader[dict[str, object]]], _fake_dataloaders()),
+            run_id="amp_eval_case",
+            checkpoint_path=checkpoint_path,
+            distributed_context=DistributedContext(ddp_enabled=False, is_distributed=False),
+        )
+    finally:
+        os.chdir(previous_cwd)
+
+    assert observed_use_amp == [True, True]
