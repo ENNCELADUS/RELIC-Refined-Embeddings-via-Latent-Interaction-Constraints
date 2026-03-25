@@ -40,9 +40,9 @@ data_config:
 model_config:
   model: "v3"
   input_dim: 1536
-  d_model: 512
-  encoder_layers: 3
-  cross_attn_layers: 3
+  d_model: 640
+  encoder_layers: 5
+  cross_attn_layers: 5
   n_heads: 8
   mlp_head:
     hidden_dims: [512, 256, 128]
