@@ -8,31 +8,24 @@ RELIC predicts protein–protein interactions (PPI) by combining ESM-3 embedding
 
 ## Quick Install
 
-Recommended to use **Conda** for environment management:
+Recommended to use **uv** for environment management:
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/ENNCELADUS/RELIC-Refined-Embeddings-via-Latent-Interaction-Constraints.git ./relic
 cd relic
 
-# 2. Create environment
-conda create -n relic python=3.11
-conda activate relic
-pip install uv
-
-# 3. Install dependencies
-uv pip install -r requirements.txt
+# 2. Install dependencies into .venv
+uv sync --group dev
 ```
 
 ## Quick Usage
 
-RELIC uses a config-driven pipeline. Ensure your environment is active:
+RELIC uses a config-driven pipeline. Run commands through `uv run` so the project-local `.venv` is used:
 
 ```bash
-conda activate relic
-
 # Run configured stages from YAML (default: train -> evaluate)
-python -m src.run --config configs/v3/v3.yaml
+uv run python -m src.run --config configs/v3/v3.yaml
 
 # To run only selected stages, edit `run_config.stages` in YAML, e.g.:
 # stages: ["train"] or stages: ["evaluate"].
@@ -46,7 +39,11 @@ TBD.
 
 ## Testing
 
-TBD.
+```bash
+uv run python -m pytest
+uv run ruff check .
+uv run ruff format .
+```
 
 ## License
 

@@ -19,6 +19,6 @@ trigger: always_on
 - Separate fast unit tests from slow integration tests.
 
 ## Commands
-- `ruff check --fix .`
-- `ruff format .`
-- `python -m pytest`
+- `uv run ruff check --fix .`
+- `uv run ruff format .`
+- `uv run python -m pytest`

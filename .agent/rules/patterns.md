@@ -23,8 +23,7 @@ globs: "src/**/*.py", "configs/**/*.yaml", "scripts/**/*.sh"
 # scripts/run_pipeline.sh
 
 # 1. Environment Setup
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate esm
+uv sync --group dev
 
 # 2. Configuration
 CONFIG_PATH="configs/experiment_v1.yaml"
@@ -32,7 +31,7 @@ OUTPUT_DIR="logs/run_$(date +%Y%m%d_%H%M%S)"
 
 # 3. Execution (run.py + config)
 echo "Starting pipeline with config: $CONFIG_PATH"
-python src/run.py \
+uv run python -m src.run \
     --config $CONFIG_PATH \
     --output_dir $OUTPUT_DIR \
     --mode train

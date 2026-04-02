@@ -6,10 +6,10 @@
 - **Role**: Act as a careful junior engineer. Follow **Plan → Confirm → Code**.
 
 ## Environment Requirement (Critical)
-- Always run Python-related commands inside the `relic` conda environment for this repository.
-- Activate with: `source /opt/homebrew/Caskroom/miniconda/base/etc/profile.d/conda.sh && conda activate relic`
-- Prefix every Bash tool call that runs Python, pytest, ruff, mypy, or any script with the command above.
-- If `relic` is not active, stop and activate it before continuing.
+- Use `uv` + `pyproject.toml` as the single source of truth for the Python environment.
+- Bootstrap or refresh the local environment with: `uv sync --group dev`
+- Run Python, tests, lint, and scripts through `uv run`, for example `uv run python -m pytest`, `uv run ruff check .`, and `uv run mypy src`.
+- If `.venv/` is missing or stale, run `uv sync --group dev` before executing repository Python commands.
 
 ## Code Style
 Act as a careful junior engineer with strong tooling.
@@ -37,10 +37,10 @@ Standard Deep Learning project layout:
 - `tests/`: Project tests (Unit, Integration, E2E).
 
 ## Build, Test, and Development Commands
-- **Environment (required before Python commands)**: `conda activate relic`
-- **Linting**: `ruff check --fix .` (Fixes lint errors)
-- **Formatting**: `ruff format .` (Formats code)
-- **Testing**: `python -m pytest` (Runs all tests)
+- **Environment bootstrap**: `uv sync --group dev`
+- **Linting**: `uv run ruff check --fix .` (Fixes lint errors)
+- **Formatting**: `uv run ruff format .` (Formats code)
+- **Testing**: `uv run python -m pytest` (Runs all tests)
 - **Orchestration**: Use shell scripts in `scripts/` to run pipelines on hpc. Avoid running `python src/run.py` directly.
 
 ## Testing Guidelines

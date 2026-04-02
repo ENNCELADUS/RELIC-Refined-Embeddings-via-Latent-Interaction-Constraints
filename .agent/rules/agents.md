@@ -15,7 +15,7 @@ Act as a careful junior engineer with strong tooling.
 
 ## Tech Stack & Environment
 - **Python**: 3.10+
-- **Environment**: Conda (env: `esm`). `conda activate esm`
+- **Environment**: `uv` + project-local `.venv`; bootstrap with `uv sync --group dev`, run commands with `uv run ...`.
 - **Core Libs**: PyTorch, Pandas, NumPy, Ruff (lint/format), Pytest.
 
 ## Specialized Role Triggers

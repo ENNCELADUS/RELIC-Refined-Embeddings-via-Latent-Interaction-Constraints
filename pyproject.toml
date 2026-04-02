@@ -7,9 +7,8 @@ name = "relic"
 version = "0.1.0"
 description = "Refined Embeddings via Latent Interaction Constraints for Protein-Protein Interaction (PPI) discovery."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 license = { file = "LICENSE" }
-dynamic = ["dependencies"]
 keywords = [
     "protein-protein-interaction",
     "bioinformatics",
@@ -23,6 +22,61 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
+dependencies = [
+    "biopython==1.86",
+    "biotite==1.6.0",
+    "biotraj==1.2.2",
+    "brotli==1.2.0",
+    "cloudpathlib==0.23.0",
+    "datasets==4.5.0",
+    "einops==0.8.2",
+    "esm==3.2.1.post1",
+    "fsspec==2025.10.0",
+    "huggingface-hub==0.36.2",
+    "ipython==9.10.0",
+    "jupyter==1.1.1",
+    "jupyterlab==4.5.3",
+    "kagglehub==0.4.3",
+    "kagglesdk==0.1.15",
+    "lightning-utilities==0.15.2",
+    "matplotlib==3.10.8",
+    "networkx==3.6.1",
+    "numba==0.63.1",
+    "numpy==2.3.5",
+    "omegaconf==2.3.0",
+    "optuna==4.7.0",
+    "pandas==3.0.0",
+    "pillow==12.1.0",
+    "pyyaml==6.0.3",
+    "requests==2.32.5",
+    "safetensors==0.7.0",
+    "scikit-learn==1.8.0",
+    "scipy==1.17.0",
+    "seaborn==0.13.2",
+    "sentencepiece==0.2.1",
+    "tiktoken==0.12.0",
+    "tokenizers==0.21.4",
+    "torch==2.10.0",
+    "torchdata==0.11.0",
+    "torchmetrics==1.8.2",
+    "torchtext==0.18.0",
+    "torchtune==0.6.1",
+    "torchvision==0.25.0",
+    "tqdm==4.67.3",
+    "transformers==4.48.1",
+    "umap-learn==0.5.11",
+]
+
+[dependency-groups]
+dev = [
+    "coverage==7.13.4",
+    "deptry==0.24.0",
+    "mypy==1.19.1",
+    "pytest==9.0.2",
+    "pytest-cov==7.0.0",
+    "ruff==0.15.0",
+    "vulture==2.14",
+]
 
 [tool.setuptools]
 include-package-data = true
@@ -32,9 +86,6 @@ where = ["."]
 include = ["src*", "src_ml*"]
 exclude = ["tests*", "docs*"]
 namespaces = true
-
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.txt"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]

@@ -425,7 +425,7 @@ class V6(nn.Module):
         try:
             from esm.models.esm3 import ESM3
         except ImportError as exc:
-            raise ImportError("ESM3 is not installed. Please run: conda activate esm") from exc
+            raise ImportError("ESM3 is not installed. Please run: uv sync --group dev") from exc
 
         model = ESM3.from_pretrained(self.esm3_model_name)
 
@@ -461,7 +461,7 @@ class V6(nn.Module):
         try:
             from esm.sdk.api import ESMProtein, LogitsConfig
         except ImportError as exc:
-            raise ImportError("ESM3 SDK is not installed. Please run: conda activate esm") from exc
+            raise ImportError("ESM3 SDK is not installed. Please run: uv sync --group dev") from exc
 
         return cast(_ProteinFactory, ESMProtein), LogitsConfig(
             sequence=True,
