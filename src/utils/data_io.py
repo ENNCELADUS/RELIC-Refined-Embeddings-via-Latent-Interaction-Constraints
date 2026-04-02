@@ -299,17 +299,6 @@ def build_dataloaders(
     run_cfg = get_section(config, "run_config")
     data_cfg = get_section(config, "data_config")
     model_cfg = get_section(config, "model_config")
-    model_name = as_str(model_cfg.get("model", ""), "model_config.model").lower()
-    if model_name == "v6":
-        from src.utils.data_io_v6 import build_dataloaders_v6
-
-        return build_dataloaders_v6(
-            config=config,
-            distributed=distributed,
-            rank=rank,
-            world_size=world_size,
-        )
-
     benchmark_cfg = get_section(data_cfg, "benchmark")
     dataloader_cfg = get_section(data_cfg, "dataloader")
 

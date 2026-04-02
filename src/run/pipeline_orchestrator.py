@@ -15,6 +15,7 @@ from src.run.bootstrap import set_global_seed
 from src.run.stage_adapt import run_shot_adaptation_stage
 from src.run.stage_evaluate import run_evaluation_stage
 from src.run.stage_topology_evaluate import run_topology_evaluation_stage
+from src.run.stage_topology_finetune import run_topology_finetuning_stage
 from src.run.stage_train import _build_stage_runtime, build_model, run_training_stage
 from src.utils.config import (
     ConfigDict,
@@ -37,7 +38,12 @@ from src.utils.logging import generate_run_id, log_stage_event
 DataLoaderMap = dict[str, torch.utils.data.DataLoader[dict[str, object]]]
 
 DEFAULT_STAGES: tuple[str, ...] = ("train", "evaluate")
-ALLOWED_STAGES: tuple[str, ...] = ("train", "evaluate", "topology_evaluate")
+ALLOWED_STAGES: tuple[str, ...] = (
+    "train",
+    "topology_finetune",
+    "evaluate",
+    "topology_evaluate",
+)
 STAGE_ORDER: dict[str, int] = {stage: index for index, stage in enumerate(ALLOWED_STAGES)}
 
 
@@ -91,7 +97,8 @@ def _selected_stages(run_cfg: ConfigDict) -> tuple[str, ...]:
         stage_order = STAGE_ORDER[stage]
         if stage_order < previous_order:
             raise ValueError(
-                "run_config.stages must follow: train -> evaluate -> topology_evaluate"
+                "run_config.stages must follow: train -> topology_finetune -> "
+                "evaluate -> topology_evaluate"
             )
         previous_order = stage_order
     return configured_stages
@@ -152,6 +159,7 @@ def execute_pipeline(
     build_dataloaders_fn: Callable[..., DataLoaderMap] = build_dataloaders,
     build_model_fn: Callable[[ConfigDict], nn.Module] = build_model,
     run_training_stage_fn: Callable[..., Path] = run_training_stage,
+    run_topology_finetuning_stage_fn: Callable[..., Path] = run_topology_finetuning_stage,
     run_adaptation_stage_fn: Callable[..., Path] = run_shot_adaptation_stage,
     run_evaluation_stage_fn: Callable[..., dict[str, float]] = run_evaluation_stage,
     run_topology_evaluation_stage_fn: Callable[
@@ -175,6 +183,7 @@ def execute_pipeline(
     try:
         selected_stages = _selected_stages(run_cfg)
         train_run_id = generate_run_id(run_cfg.get("train_run_id"))
+        topology_finetune_run_id = generate_run_id(run_cfg.get("topology_finetune_run_id"))
         adapt_run_id = generate_run_id(run_cfg.get("adapt_run_id"))
         eval_run_id = generate_run_id(run_cfg.get("eval_run_id"))
         topology_eval_run_id = generate_run_id(run_cfg.get("topology_eval_run_id"))
@@ -187,6 +196,7 @@ def execute_pipeline(
         model_name, _ = extract_model_kwargs(config)
         stage_run_map: dict[str, str] = {
             "train": train_run_id,
+            "topology_finetune": topology_finetune_run_id,
             "adapt": adapt_run_id,
             "evaluate": eval_run_id,
             "topology_evaluate": topology_eval_run_id,
@@ -264,6 +274,7 @@ def execute_pipeline(
             )
 
         train_checkpoint_path: Path | None = None
+        topology_finetune_checkpoint_path: Path | None = None
         adapt_checkpoint_path: Path | None = None
         if "train" in selected_stages:
             if distributed_context.is_main_process:
@@ -280,8 +291,27 @@ def execute_pipeline(
             if distributed_context.is_main_process:
                 log_stage_event(stage_loggers["train"], "end_training")
 
+        if "topology_finetune" in selected_stages:
+            base_checkpoint = _evaluation_checkpoint_path(
+                train_checkpoint_path=train_checkpoint_path,
+                load_checkpoint_path=load_checkpoint_path,
+            )
+            if distributed_context.is_main_process:
+                log_stage_event(stage_loggers["topology_finetune"], "begin_topology_finetuning")
+            topology_finetune_checkpoint_path = run_topology_finetuning_stage_fn(
+                config=config,
+                model=model,
+                device=device,
+                dataloaders=dataloaders,
+                run_id=topology_finetune_run_id,
+                checkpoint_path=base_checkpoint,
+                distributed_context=distributed_context,
+            )
+            if distributed_context.is_main_process:
+                log_stage_event(stage_loggers["topology_finetune"], "end_topology_finetuning")
+
         if "adapt" in selected_stages_with_adaptation:
-            base_checkpoint = train_checkpoint_path
+            base_checkpoint = topology_finetune_checkpoint_path or train_checkpoint_path
             if base_checkpoint is None:
                 base_checkpoint = load_checkpoint_path
             if base_checkpoint is None:
@@ -308,7 +338,9 @@ def execute_pipeline(
                 adapt_checkpoint_path
                 if adapt_checkpoint_path is not None
                 else _evaluation_checkpoint_path(
-                    train_checkpoint_path=train_checkpoint_path,
+                    train_checkpoint_path=(
+                        topology_finetune_checkpoint_path or train_checkpoint_path
+                    ),
                     load_checkpoint_path=load_checkpoint_path,
                 )
             )
@@ -331,7 +363,9 @@ def execute_pipeline(
                 adapt_checkpoint_path
                 if adapt_checkpoint_path is not None
                 else _evaluation_checkpoint_path(
-                    train_checkpoint_path=train_checkpoint_path,
+                    train_checkpoint_path=(
+                        topology_finetune_checkpoint_path or train_checkpoint_path
+                    ),
                     load_checkpoint_path=load_checkpoint_path,
                 )
             )

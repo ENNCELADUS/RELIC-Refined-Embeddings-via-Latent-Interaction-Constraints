@@ -112,14 +112,17 @@ P25786,9606,MFRNQYDND...,263
 ### Split Files per Strategy
 
 Each split directory (`BFS/`, `DFS/`, `RANDOM_WALK/`) contains:
-- `human_train_ppi.txt` - Training pairs
-- `human_val_ppi.txt` - Validation pairs
-- `human_test_ppi.txt` - Test pairs (binary classification)
-- `all_test_ppi.txt` - All-vs-all test protein combinations (ranking task)
-- `human_train_graph.pkl` - Training subgraph
-- `human_test_graph.pkl` - Test subgraph
-- `test_sampled_nodes.pkl` - Precomputed test subgraphs
-- `human_*_split.pkl` - Split metadata
+
+| 文件 | 角色 |
+|---|---|
+| data/PRING/human/BFS/human_BFS_split.pkl | train/test 蛋白节点划分，8072 / 2018，两边节点零重叠 |
+| data/PRING/human/BFS/human_train_graph.pkl | train 真实子图，8072 节点，53640 条正边 |
+| data/PRING/human/BFS/human_train_ppi.txt | Phase 1 训练用 pair 标签，42880 正 + 42944 负；它的正边是 train_graph 正边的 80% 子集 |
+| data/PRING/human/BFS/human_val_ppi.txt | 验证/早停用 pair 标签，10760 正 + 10696 负；正边正好是 train_graph 剩下 20% |
+| data/PRING/human/BFS/human_test_graph.pkl | test 真实子图，2018 节点，32019 条正边，给 graph-level metric 当 GT |
+| data/PRING/human/BFS/human_test_ppi.txt | pairwise 测试集，32019 正 + 32019 负；正样本边集合和 human_test_graph.pkl 完全一致 |
+| data/PRING/human/BFS/all_test_ppi.txt | test 蛋白的 全对枚举，2018*2019/2 = 2037171 对，含自配对；用于把模型分数聚合成整张 G_pred |
+| data/PRING/human/BFS/test_sampled_nodes.pkl | 500 个 BFS 采样子图的节点集合，10 个 size 桶 20..200，每个 50 个；只用于在 human_test_graph.pkl 和 G_pred 上取子图后算 GS/RD/MMD |
 
 ## Cross-Species Evaluation (Yeast, Arath, E. coli)
 

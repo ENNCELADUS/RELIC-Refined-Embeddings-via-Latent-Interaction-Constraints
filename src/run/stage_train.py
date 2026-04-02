@@ -14,7 +14,7 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
 from src.evaluate import Evaluator
-from src.model import V3, V4, V5, V6
+from src.model import V3, V4, V5
 from src.train.base import Trainer
 from src.train.config import LossConfig, OptimizerConfig, SchedulerConfig
 from src.train.strategies.lifecycle import NoOpStrategy, StagedUnfreezeStrategy, TrainingStrategy
@@ -72,16 +72,10 @@ def _build_v5_model(model_kwargs: ConfigDict) -> nn.Module:
     return V5(**model_kwargs)
 
 
-def _build_v6_model(model_kwargs: ConfigDict) -> nn.Module:
-    """Build V6 model instance."""
-    return V6(**model_kwargs)
-
-
 MODEL_FACTORIES: dict[str, ModelFactory] = {
     "v3": _build_v3_model,
     "v4": _build_v4_model,
     "v5": _build_v5_model,
-    "v6": _build_v6_model,
 }
 
 

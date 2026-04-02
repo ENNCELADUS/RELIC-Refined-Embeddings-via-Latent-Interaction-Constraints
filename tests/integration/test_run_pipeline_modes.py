@@ -40,6 +40,7 @@ class PipelineCalls:
     """Recorded mocked pipeline calls."""
 
     training: list[tuple[str, str]] = field(default_factory=list)
+    topology_finetuning: list[tuple[Path, str]] = field(default_factory=list)
     adaptation: list[tuple[Path, str]] = field(default_factory=list)
     evaluation: list[tuple[Path, str]] = field(default_factory=list)
     topology_evaluation: list[tuple[Path, str]] = field(default_factory=list)
@@ -123,6 +124,19 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
         calls.evaluation.append((checkpoint_path, run_id))
         return {"accuracy": 1.0}
 
+    def fake_run_topology_finetuning_stage(
+        config: ConfigDict,
+        model: nn.Module,
+        device: torch.device,
+        dataloaders: dict[str, DataLoader[dict[str, torch.Tensor]]],
+        run_id: str,
+        checkpoint_path: Path,
+        distributed_context: DistributedContext,
+    ) -> Path:
+        del config, model, device, dataloaders, distributed_context
+        calls.topology_finetuning.append((checkpoint_path, run_id))
+        return Path("artifacts/topology_finetune_best_model.pth")
+
     def fake_run_adaptation_stage(
         config: ConfigDict,
         model: nn.Module,
@@ -163,6 +177,11 @@ def patched_pipeline(monkeypatch: pytest.MonkeyPatch) -> PipelineCalls:
     monkeypatch.setattr(run_module, "build_dataloaders", fake_build_dataloaders)
     monkeypatch.setattr(run_module, "build_model", fake_build_model)
     monkeypatch.setattr(run_module, "run_training_stage", fake_run_training_stage)
+    monkeypatch.setattr(
+        run_module,
+        "run_topology_finetuning_stage",
+        fake_run_topology_finetuning_stage,
+    )
     monkeypatch.setattr(run_module, "run_shot_adaptation_stage", fake_run_adaptation_stage)
     monkeypatch.setattr(run_module, "run_evaluation_stage", fake_run_evaluation_stage)
     monkeypatch.setattr(
@@ -183,6 +202,7 @@ def test_execute_pipeline_all_stages(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == [(Path("artifacts/train_best_model.pth"), "eval_run")]
     assert patched_pipeline.topology_evaluation == []
@@ -199,6 +219,7 @@ def test_execute_pipeline_train_only(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == []
     assert patched_pipeline.topology_evaluation == []
@@ -216,6 +237,7 @@ def test_execute_pipeline_evaluate_only(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == []
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == [(Path("artifacts/eval_input_model.pth"), "eval_run")]
     assert patched_pipeline.topology_evaluation == []
@@ -236,6 +258,7 @@ def test_execute_pipeline_all_stages_with_shot(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == [(Path("artifacts/train_best_model.pth"), "adapt_run")]
     assert patched_pipeline.evaluation == [(Path("artifacts/adapt_best_model.pth"), "eval_run")]
     assert patched_pipeline.topology_evaluation == []
@@ -260,6 +283,7 @@ def test_execute_pipeline_evaluate_only_with_shot(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == []
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == [(Path("artifacts/eval_input_model.pth"), "adapt_run")]
     assert patched_pipeline.evaluation == [(Path("artifacts/adapt_best_model.pth"), "eval_run")]
     assert patched_pipeline.topology_evaluation == []
@@ -283,6 +307,7 @@ def test_execute_pipeline_train_only_with_shot_skips_adaptation(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == []
     assert patched_pipeline.topology_evaluation == []
@@ -300,6 +325,7 @@ def test_execute_pipeline_topology_evaluate_only(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == []
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.adaptation == []
     assert patched_pipeline.evaluation == []
     assert patched_pipeline.topology_evaluation == [
@@ -318,10 +344,56 @@ def test_execute_pipeline_train_evaluate_and_topology(
     run_module.execute_pipeline(base_config)
 
     assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.topology_finetuning == []
     assert patched_pipeline.evaluation == [(Path("artifacts/train_best_model.pth"), "eval_run")]
     assert patched_pipeline.topology_evaluation == [
         (Path("artifacts/train_best_model.pth"), "topology_eval_run")
     ]
+
+
+def test_execute_pipeline_topology_finetune_then_evaluate(
+    base_config: ConfigDict,
+    patched_pipeline: PipelineCalls,
+) -> None:
+    run_cfg = base_config["run_config"]
+    assert isinstance(run_cfg, dict)
+    run_cfg["stages"] = ["topology_finetune", "evaluate", "topology_evaluate"]
+    run_cfg["topology_finetune_run_id"] = "topology_ft_run"
+    run_cfg["load_checkpoint_path"] = "artifacts/pairwise_checkpoint.pth"
+
+    run_module.execute_pipeline(base_config)
+
+    assert patched_pipeline.training == []
+    assert patched_pipeline.topology_finetuning == [
+        (Path("artifacts/pairwise_checkpoint.pth"), "topology_ft_run")
+    ]
+    assert patched_pipeline.evaluation == [
+        (Path("artifacts/topology_finetune_best_model.pth"), "eval_run")
+    ]
+    assert patched_pipeline.topology_evaluation == [
+        (Path("artifacts/topology_finetune_best_model.pth"), "topology_eval_run")
+    ]
+
+
+def test_execute_pipeline_train_then_topology_finetune_uses_train_checkpoint(
+    base_config: ConfigDict,
+    patched_pipeline: PipelineCalls,
+) -> None:
+    run_cfg = base_config["run_config"]
+    assert isinstance(run_cfg, dict)
+    run_cfg["stages"] = ["train", "topology_finetune", "evaluate"]
+    run_cfg["topology_finetune_run_id"] = "topology_ft_run"
+
+    run_module.execute_pipeline(base_config)
+
+    assert patched_pipeline.training == [("train", "train_run")]
+    assert patched_pipeline.topology_finetuning == [
+        (Path("artifacts/train_best_model.pth"), "topology_ft_run")
+    ]
+    assert patched_pipeline.evaluation == [
+        (Path("artifacts/topology_finetune_best_model.pth"), "eval_run")
+    ]
+    assert patched_pipeline.topology_evaluation == []
 
 
 @pytest.mark.parametrize(

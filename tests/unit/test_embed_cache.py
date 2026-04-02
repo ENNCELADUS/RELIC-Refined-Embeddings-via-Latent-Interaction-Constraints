@@ -139,6 +139,38 @@ def test_ensure_embeddings_ready_falls_back_to_fasta(
     assert captured_sequences == {"Q1": "ACDE", "Q2": "FGHI"}
 
 
+def test_ensure_embeddings_ready_generates_extra_protein_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    split_path = tmp_path / "train.txt"
+    _write_split(split_path, [("P1", "P2", 1)])
+
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    (processed_dir / "proteins.csv").write_text(
+        "uniprot_id,sequence\nP1,AAAA\nP2,CCCC\nP3,GGGG\n",
+        encoding="utf-8",
+    )
+
+    cache_dir = tmp_path / "cache"
+    config = _base_config(cache_dir=cache_dir, processed_dir=processed_dir)
+    captured_sequences: dict[str, str] = {}
+    _patch_fake_generator(monkeypatch=monkeypatch, captured_sequences=captured_sequences)
+
+    manifest = ensure_embeddings_ready(
+        config=config,
+        split_paths=[split_path],
+        input_dim=4,
+        max_sequence_length=8,
+        allow_generation=True,
+        extra_protein_ids=["P3"],
+    )
+
+    assert manifest.required_ids == frozenset({"P1", "P2", "P3"})
+    assert captured_sequences == {"P1": "AAAA", "P2": "CCCC", "P3": "GGGG"}
+
+
 def test_ensure_embeddings_ready_incremental_regeneration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

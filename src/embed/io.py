@@ -64,10 +64,17 @@ def _resolve_sequence_search_roots(config: ConfigDict, split_paths: Sequence[Pat
     processed_dir_raw = _optional_string(benchmark_cfg.get("processed_dir"))
     _add_if_new(Path(processed_dir_raw) if processed_dir_raw is not None else None)
     _add_if_new(Path(root_dir_raw) if root_dir_raw is not None else None)
+    configured_roots = tuple(candidate_roots)
 
     for split_path in split_paths:
         _add_if_new(split_path.parent)
-        _add_if_new(split_path.parent.parent)
+        split_grandparent = split_path.parent.parent
+        if any(
+            split_grandparent.resolve() == root.resolve()
+            or root.resolve() in split_grandparent.resolve().parents
+            for root in configured_roots
+        ):
+            _add_if_new(split_grandparent)
 
     return [path for path in candidate_roots if path.exists()]
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import torch.distributed as dist
@@ -66,6 +66,7 @@ def ensure_embeddings_ready(
     input_dim: int,
     max_sequence_length: int,
     allow_generation: bool = True,
+    extra_protein_ids: Iterable[str] | None = None,
 ) -> EmbeddingCacheManifest:
     """Ensure all required embeddings exist and are valid before training/eval.
 
@@ -75,6 +76,7 @@ def ensure_embeddings_ready(
         input_dim: Expected embedding dimension.
         max_sequence_length: Maximum sequence length.
         allow_generation: Whether missing/invalid embeddings may be regenerated.
+        extra_protein_ids: Optional additional proteins that must exist in cache.
 
     Returns:
         Embedding cache manifest containing index and required IDs.
@@ -92,6 +94,12 @@ def ensure_embeddings_ready(
     required_ids = _collect_required_protein_ids(
         split_paths=split_paths,
     )
+    if extra_protein_ids is not None:
+        required_ids.update(
+            protein_id
+            for protein_id in extra_protein_ids
+            if isinstance(protein_id, str) and protein_id
+        )
     distributed_context = _distributed_generation_context(allow_generation=allow_generation)
     distributed_rank: int | None = None
     distributed_world_size: int | None = None

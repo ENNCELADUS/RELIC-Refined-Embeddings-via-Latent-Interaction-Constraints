@@ -116,10 +116,6 @@ def _build_topology_loader(
 ) -> tuple[DataLoader[dict[str, object]], list[tuple[str, str]]]:
     """Build deterministic topology inference loader for embedding-backed models."""
     model_cfg = get_section(config, "model_config")
-    model_name = as_str(model_cfg.get("model", ""), "model_config.model").lower()
-    if model_name == "v6":
-        raise ValueError("topology_evaluate does not yet support sequence-native v6 models")
-
     data_cfg = get_section(config, "data_config")
     dataloader_cfg = get_section(data_cfg, "dataloader")
     training_cfg = get_section(config, "training_config")
