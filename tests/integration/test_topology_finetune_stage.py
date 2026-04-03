@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import os
 import pickle
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
 import networkx as nx
+import pytest
+import src.run.stage_topology_finetune as topology_finetune_stage
 import torch
+from src.embed import EmbeddingCacheManifest
 from src.run.stage_topology_finetune import (
     _load_supervision_graphs,
     run_topology_finetuning_stage,
@@ -251,3 +255,68 @@ def test_run_topology_finetuning_stage_warm_starts_and_writes_artifacts(tmp_path
         not torch.allclose(initial_state[name], updated_state[name])
         for name in initial_state
     )
+
+
+def test_run_topology_finetuning_stage_allows_embedding_generation_on_non_main_rank(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _build_finetune_config(tmp_path)
+    config["topology_finetune"]["epochs"] = 0  # type: ignore[index]
+    model = build_model(config)
+    checkpoint_path = Path(str(config["run_config"]["load_checkpoint_path"]))  # type: ignore[index]
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), checkpoint_path)
+    dataloaders = build_dataloaders(config=config)
+    observed_allow_generation: list[bool] = []
+
+    def _fake_ensure_embeddings_ready(
+        config: ConfigDict,
+        split_paths: Sequence[Path],
+        input_dim: int,
+        max_sequence_length: int,
+        allow_generation: bool = True,
+        extra_protein_ids: Sequence[str] | None = None,
+    ) -> EmbeddingCacheManifest:
+        del split_paths, input_dim, max_sequence_length, extra_protein_ids
+        observed_allow_generation.append(allow_generation)
+        return EmbeddingCacheManifest(
+            cache_dir=Path(str(config["data_config"]["embeddings"]["cache_dir"])),  # type: ignore[index]
+            index={
+                protein_id: f"embeddings/{protein_id}.pt"
+                for protein_id in ("P1", "P2", "P3", "P4", "P5")
+            },
+            required_ids=frozenset({"P1", "P2", "P3", "P4", "P5"}),
+        )
+
+    monkeypatch.setattr(
+        topology_finetune_stage,
+        "ensure_embeddings_ready",
+        _fake_ensure_embeddings_ready,
+    )
+    monkeypatch.setattr(topology_finetune_stage.dist, "is_available", lambda: True)
+    monkeypatch.setattr(topology_finetune_stage.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(topology_finetune_stage, "distributed_barrier", lambda _: None)
+
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        run_topology_finetuning_stage(
+            config=config,
+            model=model,
+            device=torch.device("cpu"),
+            dataloaders=cast(dict[str, DataLoader[dict[str, object]]], dataloaders),
+            run_id="topology_ft_case",
+            checkpoint_path=checkpoint_path,
+            distributed_context=DistributedContext(
+                ddp_enabled=True,
+                is_distributed=True,
+                rank=1,
+                local_rank=1,
+                world_size=4,
+            ),
+        )
+    finally:
+        os.chdir(previous_cwd)
+
+    assert observed_allow_generation == [True]

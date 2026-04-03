@@ -519,14 +519,17 @@ def run_topology_finetuning_stage(
     train_path = Path(str(dataloader_cfg.get("train_dataset", "")))
     valid_path = Path(str(dataloader_cfg.get("valid_dataset", "")))
     train_graph, internal_val_graph = _load_supervision_graphs(config=config)
+    allow_embedding_generation = (
+        dist.is_available() and dist.is_initialized()
+        if distributed_context.is_distributed
+        else True
+    ) or distributed_context.is_main_process
     embedding_cache = ensure_embeddings_ready(
         config=config,
         split_paths=[train_path, valid_path],
         input_dim=input_dim,
         max_sequence_length=max_sequence_length,
-        allow_generation=(
-            distributed_context.is_main_process or not distributed_context.is_distributed
-        ),
+        allow_generation=allow_embedding_generation,
         extra_protein_ids=sorted(train_graph.nodes),
     )
     if distributed_context.is_distributed:
