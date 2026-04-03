@@ -16,6 +16,7 @@ import torch
 from src.embed import EmbeddingCacheManifest
 from src.run.stage_topology_finetune import (
     _load_supervision_graphs,
+    _resolve_sampling_node_bounds,
     run_topology_finetuning_stage,
 )
 from src.run.stage_train import build_model
@@ -214,6 +215,18 @@ def test_load_supervision_graphs_excludes_val_edges_and_keeps_all_train_nodes(
         ("P1", "P2"),
         ("P3", "P4"),
     }
+
+
+def test_resolve_sampling_node_bounds_caps_subgraphs_to_20_nodes() -> None:
+    min_nodes, max_nodes = _resolve_sampling_node_bounds(
+        {
+            "min_nodes": 64,
+            "max_nodes": 200,
+        }
+    )
+
+    assert min_nodes == 20
+    assert max_nodes == 20
 
 
 def test_run_topology_finetuning_stage_warm_starts_and_writes_artifacts(tmp_path: Path) -> None:

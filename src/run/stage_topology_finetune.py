@@ -74,6 +74,7 @@ TOPOLOGY_FINETUNE_CSV_COLUMNS = [
     "Internal Val cc_mmd",
     "Learning Rate",
 ]
+MAX_TOPOLOGY_FINETUNE_SUBGRAPH_NODES = 20
 
 
 def _topology_finetune_config(config: ConfigDict) -> ConfigDict:
@@ -132,6 +133,19 @@ def _parse_loss_weights(config: ConfigDict) -> TopologyLossWeights:
             "topology_finetune.losses.clustering_bins",
         ),
     )
+
+
+def _resolve_sampling_node_bounds(finetune_cfg: ConfigDict) -> tuple[int, int]:
+    """Resolve memory-bounded subgraph node limits for topology fine-tuning."""
+    max_nodes = min(
+        as_int(finetune_cfg.get("max_nodes", 20), "topology_finetune.max_nodes"),
+        MAX_TOPOLOGY_FINETUNE_SUBGRAPH_NODES,
+    )
+    min_nodes = min(
+        as_int(finetune_cfg.get("min_nodes", max_nodes), "topology_finetune.min_nodes"),
+        max_nodes,
+    )
+    return min_nodes, max_nodes
 
 
 def _move_chunk_to_device(
@@ -381,14 +395,15 @@ def _fit_epoch(
 ) -> dict[str, float]:
     """Run one fine-tuning epoch over sampled train subgraphs."""
     finetune_cfg = _topology_finetune_config(config)
+    min_nodes, max_nodes = _resolve_sampling_node_bounds(finetune_cfg)
     sampled_subgraphs = sample_training_subgraphs(
         graph=graph,
         num_subgraphs=as_int(
             finetune_cfg.get("subgraphs_per_epoch", 16),
             "topology_finetune.subgraphs_per_epoch",
         ),
-        min_nodes=as_int(finetune_cfg.get("min_nodes", 20), "topology_finetune.min_nodes"),
-        max_nodes=as_int(finetune_cfg.get("max_nodes", 200), "topology_finetune.max_nodes"),
+        min_nodes=min_nodes,
+        max_nodes=max_nodes,
         strategy=as_str(finetune_cfg.get("strategy", "mixed"), "topology_finetune.strategy"),
         seed=rank_seed + epoch_index,
     )
@@ -556,14 +571,15 @@ def run_topology_finetuning_stage(
     metrics_path = log_dir / "topology_finetune_metrics.json"
     csv_path = log_dir / "topology_finetune_step.csv"
     best_metrics: dict[str, float] = {}
+    min_nodes, max_nodes = _resolve_sampling_node_bounds(finetune_cfg)
     sampled_internal_val_subgraphs = sample_training_subgraphs(
         graph=internal_val_graph,
         num_subgraphs=as_int(
             finetune_cfg.get("validation_subgraphs", 8),
             "topology_finetune.validation_subgraphs",
         ),
-        min_nodes=as_int(finetune_cfg.get("min_nodes", 20), "topology_finetune.min_nodes"),
-        max_nodes=as_int(finetune_cfg.get("max_nodes", 200), "topology_finetune.max_nodes"),
+        min_nodes=min_nodes,
+        max_nodes=max_nodes,
         strategy=as_str(finetune_cfg.get("strategy", "mixed"), "topology_finetune.strategy"),
         seed=as_int(run_cfg.get("seed", 0), "run_config.seed") + 100_000,
     )

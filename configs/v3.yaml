@@ -91,7 +91,7 @@ topology_finetune:
   subgraphs_per_epoch: 100
   validation_subgraphs: 20
   min_nodes: 20
-  max_nodes: 200
+  max_nodes: 20
   strategy: "mixed"
   pair_batch_size: 16
   decision_threshold: 0.5
